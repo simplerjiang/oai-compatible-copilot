@@ -21,7 +21,14 @@ import { updateContextStatusBar } from "./statusBar";
 import { OllamaApi } from "./ollama/ollamaApi";
 import { OpenaiApi } from "./openai/openaiApi";
 import { OpenaiResponsesApi } from "./openai/openaiResponsesApi";
-import { buildOpenAIResponsesStatefulPlan } from "./openai/openaiResponsesStateful";
+import {
+	buildOpenAIResponsesStatefulPlan,
+	createOpenAIResponsesStatefulCacheBucketKey,
+	createOpenAIResponsesStatefulCacheEntry,
+	findBestMatchingOpenAIResponsesStatefulCacheEntry,
+	hasExplicitPreviousResponseIdValue,
+	upsertOpenAIResponsesStatefulCacheEntry,
+} from "./openai/openaiResponsesStateful";
 import { AnthropicApi } from "./anthropic/anthropicApi";
 import { AnthropicRequestBody } from "./anthropic/anthropicTypes";
 import { GeminiApi, buildGeminiGenerateContentUrl, type GeminiToolCallMeta } from "./gemini/geminiApi";
@@ -38,6 +45,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 	private readonly _geminiToolCallMetaByCallId = new Map<string, GeminiToolCallMeta>();
 	private readonly _openaiResponsesPreviousResponseIdUnsupportedTargets = new Set<string>();
+	private readonly _openaiResponsesStatefulCacheByTarget = new Map<
+		string,
+		ReturnType<typeof createOpenAIResponsesStatefulCacheEntry>[]
+	>();
 
 	static readonly OPENAI_RESPONSES_STATEFUL_MARKER_MIME = "application/vnd.oaicopilot.stateful-marker";
 
@@ -293,12 +304,20 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 				// Convert full history once (also extracts system `instructions`).
 				const fullInput = openaiResponsesApi.convertMessages(messages, modelConfig);
+				const statefulCacheBucketKey = createOpenAIResponsesStatefulCacheBucketKey(
+					normalizedBaseUrl,
+					statefulModelId
+				);
+				const statefulCacheEntries = this._openaiResponsesStatefulCacheByTarget.get(statefulCacheBucketKey) ?? [];
+				const cacheMatch = findBestMatchingOpenAIResponsesStatefulCacheEntry(statefulCacheEntries, fullInput);
 
 				const marker = findLastOpenAIResponsesStatefulMarker(statefulModelId, messages);
 				let deltaInput: ReturnType<OpenaiResponsesApi["convertMessages"]> | null = null;
-				const hasDeltaMessages = !!marker && marker.index >= 0 && marker.index < messages.length - 1;
+				const cacheDeltaAnchorIndex = !marker && cacheMatch ? findLastAssistantMessageIndex(messages) : -1;
+				const deltaAnchorIndex = marker?.index ?? cacheDeltaAnchorIndex;
+				const hasDeltaMessages = deltaAnchorIndex >= 0 && deltaAnchorIndex < messages.length - 1;
 				if (hasDeltaMessages) {
-					const deltaMessages = messages.slice(marker.index + 1);
+					const deltaMessages = messages.slice(deltaAnchorIndex + 1);
 					const converted = openaiResponsesApi.convertMessages(deltaMessages, modelConfig);
 					if (converted.length > 0) {
 						deltaInput = converted;
@@ -330,8 +349,15 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					fullInput,
 					deltaInput,
 					marker,
+					cacheCandidate:
+						!marker && cacheMatch
+							? {
+								previousResponseId: cacheMatch.entry.previousResponseId,
+								source: "cache",
+							}
+							: null,
 					hasDeltaMessages,
-					explicitPreviousResponseId: requestBody.previous_response_id !== undefined,
+					explicitPreviousResponseId: hasExplicitPreviousResponseIdValue(requestBody.previous_response_id),
 					unsupportedPreviousResponseIdKeys: this._openaiResponsesPreviousResponseIdUnsupportedTargets,
 					modelFamily: um?.family,
 					displayName: um?.displayName,
@@ -347,9 +373,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					requestModel: parsedModelId.baseId,
 					isGptModel: statefulPlan.isGptModel,
 					hasMarker: !!marker?.marker,
+					hasCacheMatch: !!cacheMatch,
 					hasDeltaMessages,
 					deltaInputLength: Array.isArray(deltaInput) ? deltaInput.length : 0,
 					usedPreviousResponseId: statefulPlan.addedPreviousResponseId,
+					previousResponseIdSource: statefulPlan.previousResponseIdSource ?? "",
 					usedDeltaInput: requestBody.input === statefulPlan.input && statefulPlan.input !== fullInput,
 				});
 
@@ -411,6 +439,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// Append a stateful marker so future requests can reuse `previous_response_id` (Copilot Chat style).
 				const responseId = openaiResponsesApi.responseId;
 				if (responseId) {
+					const cacheEntry = createOpenAIResponsesStatefulCacheEntry(fullInput, responseId);
+					this._openaiResponsesStatefulCacheByTarget.set(
+						statefulCacheBucketKey,
+						upsertOpenAIResponsesStatefulCacheEntry(statefulCacheEntries, cacheEntry)
+					);
 					trackingProgress.report(createOpenAIResponsesStatefulMarkerPart(statefulModelId, responseId));
 				}
 			} else if (apiMode === "gemini") {
@@ -639,4 +672,14 @@ function findLastOpenAIResponsesStatefulMarker(
 		}
 	}
 	return null;
+}
+
+function findLastAssistantMessageIndex(messages: readonly LanguageModelChatRequestMessage[]): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].role === vscode.LanguageModelChatMessageRole.Assistant) {
+			return i;
+		}
+	}
+
+	return -1;
 }
