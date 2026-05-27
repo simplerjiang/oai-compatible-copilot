@@ -21,6 +21,7 @@ import { updateContextStatusBar } from "./statusBar";
 import { OllamaApi } from "./ollama/ollamaApi";
 import { OpenaiApi } from "./openai/openaiApi";
 import { OpenaiResponsesApi } from "./openai/openaiResponsesApi";
+import { buildOpenAIResponsesStatefulPlan } from "./openai/openaiResponsesStateful";
 import { AnthropicApi } from "./anthropic/anthropicApi";
 import { AnthropicRequestBody } from "./anthropic/anthropicTypes";
 import { GeminiApi, buildGeminiGenerateContentUrl, type GeminiToolCallMeta } from "./gemini/geminiApi";
@@ -36,7 +37,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	private _lastRequestTime: number | null = null;
 
 	private readonly _geminiToolCallMetaByCallId = new Map<string, GeminiToolCallMeta>();
-	private readonly _openaiResponsesPreviousResponseIdUnsupportedBaseUrls = new Set<string>();
+	private readonly _openaiResponsesPreviousResponseIdUnsupportedTargets = new Set<string>();
 
 	static readonly OPENAI_RESPONSES_STATEFUL_MARKER_MIME = "application/vnd.oaicopilot.stateful-marker";
 
@@ -294,8 +295,9 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const fullInput = openaiResponsesApi.convertMessages(messages, modelConfig);
 
 				const marker = findLastOpenAIResponsesStatefulMarker(statefulModelId, messages);
-				let deltaInput: unknown[] | null = null;
-				if (marker && marker.index >= 0 && marker.index < messages.length - 1) {
+				let deltaInput: ReturnType<OpenaiResponsesApi["convertMessages"]> | null = null;
+				const hasDeltaMessages = !!marker && marker.index >= 0 && marker.index < messages.length - 1;
+				if (hasDeltaMessages) {
 					const deltaMessages = messages.slice(marker.index + 1);
 					const converted = openaiResponsesApi.convertMessages(deltaMessages, modelConfig);
 					if (converted.length > 0) {
@@ -303,18 +305,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					}
 				}
 
-				const canUsePreviousResponseId =
-					!!marker?.marker &&
-					!this._openaiResponsesPreviousResponseIdUnsupportedBaseUrls.has(normalizedBaseUrl) &&
-					Array.isArray(deltaInput) &&
-					deltaInput.length > 0;
-
-				const input = canUsePreviousResponseId ? deltaInput! : fullInput;
-
 				// requestBody
 				let requestBody: Record<string, unknown> = {
 					model: parsedModelId.baseId,
-					input,
+					input: fullInput,
 					stream: true,
 				};
 
@@ -330,13 +324,34 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				logger.debug("request.body", { url, requestBody });
 
 				// If the user explicitly set `previous_response_id` via `extra`, don't apply stateful slicing.
-				let addedPreviousResponseId = false;
-				if (requestBody.previous_response_id !== undefined) {
-					requestBody.input = fullInput;
-				} else if (canUsePreviousResponseId) {
-					requestBody.previous_response_id = marker!.marker;
-					addedPreviousResponseId = true;
+				const statefulPlan = buildOpenAIResponsesStatefulPlan({
+					requestModel: parsedModelId.baseId,
+					normalizedBaseUrl,
+					fullInput,
+					deltaInput,
+					marker,
+					hasDeltaMessages,
+					explicitPreviousResponseId: requestBody.previous_response_id !== undefined,
+					unsupportedPreviousResponseIdKeys: this._openaiResponsesPreviousResponseIdUnsupportedTargets,
+					modelFamily: um?.family,
+					displayName: um?.displayName,
+					modelId: model.id,
+				});
+				requestBody.input = statefulPlan.input;
+				if (statefulPlan.addedPreviousResponseId) {
+					requestBody.previous_response_id = statefulPlan.previousResponseId;
 				}
+
+				logger.debug("responses.stateful.plan", {
+					modelId: model.id,
+					requestModel: parsedModelId.baseId,
+					isGptModel: statefulPlan.isGptModel,
+					hasMarker: !!marker?.marker,
+					hasDeltaMessages,
+					deltaInputLength: Array.isArray(deltaInput) ? deltaInput.length : 0,
+					usedPreviousResponseId: statefulPlan.addedPreviousResponseId,
+					usedDeltaInput: requestBody.input === statefulPlan.input && statefulPlan.input !== fullInput,
+				});
 
 				const sendRequest = async (body: Record<string, unknown>) =>
 					await executeWithRetry(async () => {
@@ -367,12 +382,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					// Fall back to sending full history when the previous-response attempt fails.
 					const status = (err as { status?: unknown })?.status;
 					const shouldFallback =
-						addedPreviousResponseId && typeof status === "number" && status >= 400 && status < 500 && status !== 429;
+						statefulPlan.addedPreviousResponseId &&
+						typeof status === "number" &&
+						status >= 400 &&
+						status < 500 &&
+						status !== 429;
 					if (!shouldFallback) {
 						throw err;
 					}
 
-					this._openaiResponsesPreviousResponseIdUnsupportedBaseUrls.add(normalizedBaseUrl);
+					this._openaiResponsesPreviousResponseIdUnsupportedTargets.add(statefulPlan.unsupportedKey);
 
 					let fallbackBody: Record<string, unknown> = {
 						model: parsedModelId.baseId,
