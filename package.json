@@ -1,6 +1,6 @@
 {
 	"name": "oai-compatible-copilot-kong",
-	"publisher": "kong-fork",
+	"publisher": "simplerjiang",
 	"displayName": "OAICopilot-Kong",
 	"description": "Kong fork of OAI Compatible Provider for Copilot. Adds the openai-responses-ws apiMode for per-run WebSocket reuse against cliproxy-style upstreams.",
 	"icon": "assets/logo.png",
@@ -28,7 +28,7 @@
 		"type": "git",
 		"url": "https://github.com/simplerjiang/CLIProxyAPI"
 	},
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"engines": {
 		"vscode": "^1.120.0"
 	},
