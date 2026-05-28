@@ -91,7 +91,7 @@ export interface HFModelItem {
 
 	/**
 	 * Model-specific delay in milliseconds between consecutive requests.
-	 * If not specified, falls back to global `oaicopilot.delay` configuration.
+	 * If not specified, falls back to global `oaicopilot-kong.delay` configuration.
 	 */
 	delay?: number;
 
@@ -155,7 +155,7 @@ export interface RetryConfig {
 }
 
 /** Supports API mode. */
-export type HFApiMode = "openai" | "openai-responses" | "ollama" | "anthropic" | "gemini";
+export type HFApiMode = "openai" | "openai-responses" | "openai-responses-ws" | "ollama" | "anthropic" | "gemini";
 
 /**
  * Custom data part MIME types for vscode.LanguageModelDataPart

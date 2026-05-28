@@ -136,6 +136,7 @@ document.getElementById("addProvider").addEventListener("click", () => {
 			<select class="provider-input" data-field="apiMode">
 				<option value="openai">OpenAI</option>
 				<option value="openai-responses">OpenAI Responses</option>
+				<option value="openai-responses-ws">OpenAI Responses (WebSocket)</option>
 				<option value="ollama">Ollama</option>
 				<option value="anthropic">Anthropic</option>
 				<option value="gemini">Gemini</option>
@@ -315,7 +316,7 @@ window.addEventListener("message", (event) => {
 			// Handle error from fetchModels
 			dropdownHeader.textContent = "Error fetching models";
 			dropdownContent.innerHTML = `<div class="dropdown-option error">Failed to fetch models. Check the Developer Console for details.</div>`;
-			console.error("[oaicopilot] Failed to fetch models:", message.error);
+			console.error("[oaicopilot-kong] Failed to fetch models:", message.error);
 			break;
 		case "confirmResponse":
 			// Handle confirmation responses
@@ -363,6 +364,7 @@ function renderProviders() {
 					<select class="provider-input" data-field="apiMode">
 						<option value="openai" ${firstModel.apiMode === "openai" ? "selected" : ""}>OpenAI</option>
 						<option value="openai-responses" ${firstModel.apiMode === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
+						<option value="openai-responses-ws" ${firstModel.apiMode === "openai-responses-ws" ? "selected" : ""}>OpenAI Responses (WebSocket)</option>
 						<option value="ollama" ${firstModel.apiMode === "ollama" ? "selected" : ""}>Ollama</option>
 						<option value="anthropic" ${firstModel.apiMode === "anthropic" ? "selected" : ""}>Anthropic</option>
 						<option value="gemini" ${firstModel.apiMode === "gemini" ? "selected" : ""}>Gemini</option>

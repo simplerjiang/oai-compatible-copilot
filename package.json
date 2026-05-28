@@ -1,8 +1,8 @@
 {
-	"name": "oai-compatible-copilot",
-	"publisher": "johnny-zhao",
-	"displayName": "OAI Compatible Provider for Copilot",
-	"description": "An extension that integrates OpenAI/Ollama/Anthropic/Gemini API Providers into GitHub Copilot Chat",
+	"name": "oai-compatible-copilot-kong",
+	"publisher": "kong-fork",
+	"displayName": "OAICopilot-Kong",
+	"description": "Kong fork of OAI Compatible Provider for Copilot. Adds the openai-responses-ws apiMode for per-run WebSocket reuse against cliproxy-style upstreams.",
 	"icon": "assets/logo.png",
 	"keywords": [
 		"ai",
@@ -19,13 +19,16 @@
 		"openai-compatible",
 		"openai-responses",
 		"git-commit",
-		"thinking"
+		"thinking",
+		"kong",
+		"fork",
+		"websocket"
 	],
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/JohnnyZ93/oai-compatible-copilot"
+		"url": "https://github.com/simplerjiang/CLIProxyAPI"
 	},
-	"version": "0.4.2",
+	"version": "1.0.0",
 	"engines": {
 		"vscode": "^1.120.0"
 	},
@@ -33,15 +36,8 @@
 		"AI",
 		"Chat"
 	],
-	"badges": [
-		{
-			"url": "https://img.shields.io/github/stars/JohnnyZ93/oai-compatible-copilot?style=social",
-			"description": "Star oai-compatible-copilot on Github",
-			"href": "https://github.com/JohnnyZ93/oai-compatible-copilot"
-		}
-	],
 	"bugs": {
-		"url": "https://github.com/JohnnyZ93/oai-compatible-copilot/issues"
+		"url": "https://github.com/simplerjiang/CLIProxyAPI/issues"
 	},
 	"license": "MIT",
 	"enabledApiProposals": [
@@ -50,68 +46,68 @@
 	"contributes": {
 		"languageModelChatProviders": [
 			{
-				"vendor": "oaicopilot",
-				"displayName": "OAI Compatible",
-				"managementCommand": "oaicopilot.setApikey"
+				"vendor": "oaicopilot-kong",
+				"displayName": "OAICopilot-Kong",
+				"managementCommand": "oaicopilot-kong.setApikey"
 			}
 		],
 		"commands": [
 			{
-				"command": "oaicopilot.setApikey",
-				"category": "OAICopilot",
+				"command": "oaicopilot-kong.setApikey",
+				"category": "OAICopilot-Kong",
 				"title": "Set OAI Compatible Apikey"
 			},
 			{
-				"command": "oaicopilot.setProviderApikey",
-				"category": "OAICopilot",
+				"command": "oaicopilot-kong.setProviderApikey",
+				"category": "OAICopilot-Kong",
 				"title": "Set OAI Compatible Multi-Provider Apikey"
 			},
 			{
-				"command": "oaicopilot.openConfig",
-				"category": "OAICopilot",
+				"command": "oaicopilot-kong.openConfig",
+				"category": "OAICopilot-Kong",
 				"title": "Open Configuration UI"
 			},
 			{
-				"command": "oaicopilot.generateGitCommitMessage",
-				"title": "Generate Commit Message with OAICopilot",
-				"category": "OAICopilot",
+				"command": "oaicopilot-kong.generateGitCommitMessage",
+				"title": "Generate Commit Message with OAICopilot-Kong",
+				"category": "OAICopilot-Kong",
 				"icon": "$(wand)"
 			},
 			{
-				"command": "oaicopilot.abortGitCommitMessage",
-				"title": "Generate Commit Message with OAICopilot - Stop",
-				"category": "OAICopilot",
+				"command": "oaicopilot-kong.abortGitCommitMessage",
+				"title": "Generate Commit Message with OAICopilot-Kong - Stop",
+				"category": "OAICopilot-Kong",
 				"icon": "$(debug-stop)"
 			}
 		],
 		"menus": {
 			"scm/title": [
 				{
-					"command": "oaicopilot.generateGitCommitMessage",
+					"command": "oaicopilot-kong.generateGitCommitMessage",
 					"group": "navigation",
-					"when": "config.git.enabled && scmProvider == git && !oaicopilot.isGeneratingCommit"
+					"when": "config.git.enabled && scmProvider == git && !oaicopilot-kong.isGeneratingCommit"
 				},
 				{
-					"command": "oaicopilot.abortGitCommitMessage",
+					"command": "oaicopilot-kong.abortGitCommitMessage",
 					"group": "navigation",
-					"when": "config.git.enabled && scmProvider == git && oaicopilot.isGeneratingCommit"
+					"when": "config.git.enabled && scmProvider == git && oaicopilot-kong.isGeneratingCommit"
 				}
 			],
 			"commandPalette": [
 				{
-					"command": "oaicopilot.generateGitCommitMessage",
-					"when": "config.git.enabled && !oaicopilot.isGeneratingCommit"
+					"command": "oaicopilot-kong.generateGitCommitMessage",
+					"when": "config.git.enabled && !oaicopilot-kong.isGeneratingCommit"
 				},
 				{
-					"command": "oaicopilot.abortGitCommitMessage",
-					"when": "config.git.enabled && oaicopilot.isGeneratingCommit"
+					"command": "oaicopilot-kong.abortGitCommitMessage",
+					"when": "config.git.enabled && oaicopilot-kong.isGeneratingCommit"
 				}
 			]
 		},
 		"configuration": {
-			"title": "OAI Compatible Copilot",
+			"title": "OAICopilot-Kong",
 			"properties": {
-				"oaicopilot.logLevel": {
+				"oaicopilot-kong.logLevel": {
 				"type": "string",
 				"default": "off",
 				"enum": [
@@ -121,14 +117,14 @@
 					"warn",
 					"error"
 				],
-				"description": "Debug log level. Logs are written to ~/.copilot/oaicopilot/logs/ as JSON lines. Default is 'off' (no logging)."
+				"description": "Debug log level. Logs are written to ~/.copilot/oaicopilot-kong/logs/ as JSON lines. Default is 'off' (no logging)."
 			},
-			"oaicopilot.baseUrl": {
+			"oaicopilot-kong.baseUrl": {
 					"type": "string",
 					"default": "https://router.huggingface.co/v1",
 					"description": "The base URL for the Openai Compatible Inference API. Default value is Hugging Face."
 				},
-				"oaicopilot.models": {
+				"oaicopilot-kong.models": {
 					"type": "array",
 					"default": [],
 					"items": {
@@ -164,7 +160,7 @@
 							},
 							"baseUrl": {
 								"type": "string",
-								"description": "Base URL for the model provider. If not provided, the global oaicopilot.baseUrl will be used."
+								"description": "Base URL for the model provider. If not provided, the global oaicopilot-kong.baseUrl will be used."
 							},
 							"context_length": {
 								"type": "number",
@@ -339,12 +335,13 @@
 								"enum": [
 									"openai",
 									"openai-responses",
+									"openai-responses-ws",
 									"ollama",
 									"anthropic",
 									"gemini"
 								],
 								"default": "openai",
-								"description": "API mode: 'openai' (Default) for OpenAI Chat Completions (/chat/completions), 'openai-responses' for OpenAI Responses (/responses), 'ollama' for Ollama (/api/chat), 'anthropic' for Anthropic (/v1/messages), 'gemini' for Gemini (*/v1beta/models/{model}:streamGenerateContent?alt=sse)."
+								"description": "API mode: 'openai' (Default) for OpenAI Chat Completions (/chat/completions), 'openai-responses' for OpenAI Responses (/responses), 'openai-responses-ws' for OpenAI Responses over a reused per-run WebSocket (cliproxy-style upstreams; auto-falls back to 'openai-responses' on handshake/protocol error), 'ollama' for Ollama (/api/chat), 'anthropic' for Anthropic (/v1/messages), 'gemini' for Gemini (*/v1beta/models/{model}:streamGenerateContent?alt=sse)."
 							},
 							"useForCommitGeneration": {
 								"type": "boolean",
@@ -355,7 +352,7 @@
 								"type": "number",
 								"default": 0,
 								"minimum": 0,
-								"description": "Model-specific delay in milliseconds between consecutive requests. If not specified, falls back to global oaicopilot.delay configuration."
+								"description": "Model-specific delay in milliseconds between consecutive requests. If not specified, falls back to global oaicopilot-kong.delay configuration."
 							},
 							"cache_control": {
 								"type": "boolean",
@@ -386,7 +383,7 @@
 					},
 					"description": "A list of preferred models to use. If provided, these models will be used directly instead of fetching from the API."
 				},
-				"oaicopilot.retry": {
+				"oaicopilot-kong.retry": {
 					"type": "object",
 					"default": {
 						"enabled": true,
@@ -422,13 +419,13 @@
 					},
 					"description": "Retry configuration for handling api errors like [429, 500, 502, 503, 504]."
 				},
-				"oaicopilot.delay": {
+				"oaicopilot-kong.delay": {
 					"type": "number",
 					"default": 0,
 					"minimum": 0,
 					"description": "Fixed delay in milliseconds between consecutive requests. Default is 0 (no delay)."
 				},
-				"oaicopilot.commitLanguage": {
+				"oaicopilot-kong.commitLanguage": {
 					"type": "string",
 					"default": "English",
 					"enum": [
@@ -449,12 +446,12 @@
 					],
 					"description": "Language for generated Git commit messages. Default is English."
 				},
-				"oaicopilot.commitMessagePrompt": {
+				"oaicopilot-kong.commitMessagePrompt": {
 					"type": "string",
 					"default": "",
 					"description": "Custom system prompt for commit message generation. If not provided, uses the default prompt."
 				},
-				"oaicopilot.readFileLines": {
+				"oaicopilot-kong.readFileLines": {
 					"type": "number",
 					"default": 0,
 					"minimum": 0,
@@ -476,13 +473,15 @@
 		"build": "npx @vscode/vsce package -o extension.vsix"
 	},
 	"dependencies": {
-		"@microsoft/tiktokenizer": "^1.0.10"
+		"@microsoft/tiktokenizer": "^1.0.10",
+		"ws": "^8.18.0"
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.13.0",
 		"@stylistic/eslint-plugin": "^2.9.0",
 		"@types/node": "^22",
 		"@types/mocha": "^10.0.6",
+		"@types/ws": "^8.5.13",
 		"@vscode/dts": "^0.4.1",
 		"@types/vscode": "^1.104.0",
 		"@vscode/test-cli": "^0.0.11",

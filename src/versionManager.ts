@@ -8,7 +8,7 @@ export class VersionManager {
 	 */
 	static getVersion(): string {
 		if (this._version === null) {
-			const extension = vscode.extensions.getExtension("johnny-zhao.oai-compatible-copilot");
+			const extension = vscode.extensions.getExtension("kong-fork.oai-compatible-copilot-kong");
 			this._version = extension?.packageJSON?.version ?? "unknown";
 		}
 		return this._version!;
@@ -20,7 +20,7 @@ export class VersionManager {
 	 */
 	static getUserAgent(): string {
 		const vscodeVersion = vscode.version;
-		return `oai-compatible-copilot/${this.getVersion()} VSCode/${vscodeVersion}`;
+		return `oaicopilot-kong/${this.getVersion()} VSCode/${vscodeVersion}`;
 	}
 
 	/**
@@ -28,7 +28,7 @@ export class VersionManager {
 	 */
 	static getClientInfo(): { name: string; version: string; author: string } {
 		return {
-			name: "oai-compatible-copilot",
+			name: "oai-compatible-copilot-kong",
 			version: this.getVersion(),
 			author: "johnny-zhao",
 		};

@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" alt="OAICopilot Logo" width="120" height="120">
 
-# OAI Compatible Provider for Copilot
+# OAICopilot-Kong（OAI Compatible Provider for Copilot 的 Kong 分支）
 
 **在 VS Code 的 GitHub Copilot Chat 中使用任意 OpenAI/Ollama/Anthropic/Gemini API兼容供应商** 🔥
 
@@ -10,11 +10,16 @@
 
 </div>
 
-[![CI](https://github.com/JohnnyZ93/oai-compatible-copilot/actions/workflows/release.yml/badge.svg)](https://github.com/JohnnyZ93/oai-compatible-copilot/actions)
-[![License](https://img.shields.io/github/license/JohnnyZ93/oai-compatible-copilot?color=orange&label=License)](https://github.com/JohnnyZ93/oai-compatible-copilot/blob/main/LICENSE)
+> **Kong 分支说明**
+> 本仓库是 [`JohnnyZ93/oai-compatible-copilot`](https://github.com/JohnnyZ93/oai-compatible-copilot) 的非官方分支，由 Kong 项目维护。
+> **与原作者无任何关联，也不代表上游立场**。本分支的问题请勿提交到上游仓库。
+> 与上游的主要差异：
+> - 所有插件命名空间从 `oaicopilot.*` 重命名为 `oaicopilot-kong.*`（命令、配置项、Secrets、上下文键、日志路径、vendor id、MIME 类型）。首次激活时会一次性把你已有的上游配置和密钥迁移到新命名空间。
+> - 新增 `openai-responses-ws` apiMode：通过单个会话期间复用的 WebSocket 与 cliproxy 风格上游（`/v1/responses`）传输 OpenAI Responses 流，多轮对话通过服务端 `previous_response_id` 串联；握手或协议失败时自动回退到普通 HTTP `openai-responses`。
 
 ## ✨ 特性
 - **多 API 支持**：OpenAI/Ollama/Anthropic/Gemini API（ModelScope、SiliconFlow、DeepSeek 等）
+- **WebSocket Responses 传输**：针对 cliproxy 风格 OpenAI Responses 后端的单会话 WebSocket 复用（`openai-responses-ws`），失败时透明回退到 HTTP。
 - **视觉模型**：完整支持图像理解能力
 - **高级配置**：灵活的对话请求选项，支持思维链/推理控制
 - **多供应商管理**：同时配置多个供应商模型，自动管理各供应商 API 密钥

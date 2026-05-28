@@ -20,7 +20,12 @@ import { countMessageTokens } from "./provideToken";
 import { updateContextStatusBar } from "./statusBar";
 import { OllamaApi } from "./ollama/ollamaApi";
 import { OpenaiApi } from "./openai/openaiApi";
-import { OpenaiResponsesApi } from "./openai/openaiResponsesApi";
+import { OpenaiResponsesApi, type OpenAIResponsesTransport } from "./openai/openaiResponsesApi";
+import {
+	hasOpenAIResponsesWebsocketSession,
+	OpenaiResponsesWebsocketApi,
+	WsUnsupportedError,
+} from "./openai/openaiResponsesWebsocketApi";
 import {
 	buildOpenAIResponsesStatefulPlan,
 	createOpenAIResponsesStatefulCacheBucketKey,
@@ -49,8 +54,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		string,
 		ReturnType<typeof createOpenAIResponsesStatefulCacheEntry>[]
 	>();
+	private readonly _openaiResponsesWsSessionKeyByResponseId = new Map<string, string>();
+	private _openaiResponsesWsSessionSeq = 0;
 
-	static readonly OPENAI_RESPONSES_STATEFUL_MARKER_MIME = "application/vnd.oaicopilot.stateful-marker";
+	static readonly OPENAI_RESPONSES_STATEFUL_MARKER_MIME = "application/vnd.oaicopilot-kong.stateful-marker";
 
 	/**
 	 * Create a provider using the given secret storage for the API key.
@@ -122,7 +129,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		try {
 			// get model config from user settings
 			const config = vscode.workspace.getConfiguration();
-			const userModels = normalizeUserModels(config.get<unknown>("oaicopilot.models", []));
+			const userModels = normalizeUserModels(config.get<unknown>("oaicopilot-kong.models", []));
 
 			// Parse model ID to handle config ID
 			const parsedModelId = parseModelId(model.id);
@@ -144,7 +151,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 			// Check if using Ollama native API mode
 			const apiMode = um?.apiMode ?? "openai";
-			const baseUrl = um?.baseUrl || config.get<string>("oaicopilot.baseUrl", "");
+			const baseUrl = um?.baseUrl || config.get<string>("oaicopilot-kong.baseUrl", "");
 
 			logger.info("request.start", {
 				modelId: model.id,
@@ -163,7 +170,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 			// Apply delay between consecutive requests
 			const modelDelay = um?.delay;
-			const globalDelay = config.get<number>("oaicopilot.delay", 0);
+			const globalDelay = config.get<number>("oaicopilot-kong.delay", 0);
 			const delayMs = modelDelay !== undefined ? modelDelay : globalDelay;
 
 			if (delayMs > 0 && this._lastRequestTime !== null) {
@@ -296,9 +303,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					throw new Error("No response body from Anthropic API");
 				}
 				await anthropicApi.processStreamingResponse(response.body, trackingProgress, token);
-			} else if (apiMode === "openai-responses") {
-				// OpenAI Responses API mode
-				const openaiResponsesApi = new OpenaiResponsesApi(model.id);
+			} else if (apiMode === "openai-responses" || apiMode === "openai-responses-ws") {
+				// OpenAI Responses API mode (HTTP or per-run WebSocket transport).
+				const useWs = apiMode === "openai-responses-ws";
+				const openaiResponsesApi: OpenaiResponsesApi = useWs
+					? new OpenaiResponsesWebsocketApi(model.id)
+					: new OpenaiResponsesApi(model.id);
 				const normalizedBaseUrl = BASE_URL.replace(/\/+$/, "");
 				const statefulModelId = parsedModelId.baseId;
 
@@ -336,7 +346,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// Add prompt_cache_key to enable OpenAI prompt caching.
 				// Without this parameter, cached_tokens is always 0 even with identical requests.
 				if (!requestBody.prompt_cache_key) {
-					requestBody.prompt_cache_key = `oaicopilot-${parsedModelId.baseId}`;
+					requestBody.prompt_cache_key = `oaicopilot-kong-${parsedModelId.baseId}`;
 				}
 				// send Responses API request with retry
 				const url = `${normalizedBaseUrl}/responses`;
@@ -363,9 +373,43 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					displayName: um?.displayName,
 					modelId: model.id,
 				});
-				requestBody.input = statefulPlan.input;
-				if (statefulPlan.addedPreviousResponseId) {
-					requestBody.previous_response_id = statefulPlan.previousResponseId;
+				const explicitPreviousResponseId = hasExplicitPreviousResponseIdValue(requestBody.previous_response_id);
+				const wsPreviousResponseId = marker?.marker || cacheMatch?.entry.previousResponseId || "";
+				const mappedWsSessionKey = wsPreviousResponseId
+					? this._openaiResponsesWsSessionKeyByResponseId.get(wsPreviousResponseId)
+					: undefined;
+				const wsHasMappedLiveSession =
+					useWs &&
+					!!mappedWsSessionKey &&
+					hasOpenAIResponsesWebsocketSession(mappedWsSessionKey);
+				const wsSessionKey = useWs && wsHasMappedLiveSession
+					? mappedWsSessionKey!
+					: useWs
+						? this.createOpenAIResponsesWsSessionKey(statefulCacheBucketKey)
+						: statefulCacheBucketKey;
+				const wsHasLiveSession = useWs && wsHasMappedLiveSession;
+				const wsCanUseDeltaInput =
+					wsHasLiveSession &&
+					statefulPlan.isGptModel &&
+					!explicitPreviousResponseId &&
+					!!wsPreviousResponseId &&
+					(!!marker?.marker || !!cacheMatch) &&
+					hasDeltaMessages &&
+					Array.isArray(deltaInput) &&
+					deltaInput.length > 0;
+
+				if (useWs) {
+					requestBody.input = wsCanUseDeltaInput ? deltaInput : fullInput;
+					if (wsCanUseDeltaInput) {
+						requestBody.previous_response_id = wsPreviousResponseId;
+					} else {
+						delete requestBody.previous_response_id;
+					}
+				} else {
+					requestBody.input = statefulPlan.input;
+					if (statefulPlan.addedPreviousResponseId) {
+						requestBody.previous_response_id = statefulPlan.previousResponseId;
+					}
 				}
 
 				logger.debug("responses.stateful.plan", {
@@ -376,10 +420,17 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					hasCacheMatch: !!cacheMatch,
 					hasDeltaMessages,
 					deltaInputLength: Array.isArray(deltaInput) ? deltaInput.length : 0,
-					usedPreviousResponseId: statefulPlan.addedPreviousResponseId,
-					previousResponseIdSource: statefulPlan.previousResponseIdSource ?? "",
-					usedDeltaInput: requestBody.input === statefulPlan.input && statefulPlan.input !== fullInput,
+					usedPreviousResponseId: !useWs && statefulPlan.addedPreviousResponseId,
+					previousResponseIdSource: !useWs ? statefulPlan.previousResponseIdSource ?? "" : "",
+					wsHasLiveSession,
+					wsCanUseDeltaInput,
+					wsMappedSession: !!mappedWsSessionKey,
+					wsMappedSessionLive: wsHasMappedLiveSession,
+					usedDeltaInput: requestBody.input !== fullInput,
 				});
+
+				const buildResponsesTransportBody = (transport: OpenAIResponsesTransport): Record<string, unknown> =>
+					openaiResponsesApi.sanitizeRequestBody(requestBody, transport);
 
 				const sendRequest = async (body: Record<string, unknown>) =>
 					await executeWithRetry(async () => {
@@ -402,39 +453,92 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						return res;
 					}, retryConfig);
 
-				let response: Response;
-				try {
-					response = await sendRequest(requestBody);
-				} catch (err) {
-					// Some Responses-compatible gateways don't support `previous_response_id`.
-					// Fall back to sending full history when the previous-response attempt fails.
-					const status = (err as { status?: unknown })?.status;
-					const shouldFallback =
-						statefulPlan.addedPreviousResponseId &&
-						typeof status === "number" &&
-						status >= 400 &&
-						status < 500 &&
-						status !== 429;
-					if (!shouldFallback) {
-						throw err;
+				const wsUsedDeltaInput = useWs && requestBody.input !== fullInput;
+				let wsHandled = false;
+				if (useWs) {
+					try {
+						const wsRequestBody = buildResponsesTransportBody("websocket");
+						const wsRequestHeaders = {
+							...requestHeaders,
+							"X-Client-Request-Id": createOpenAIResponsesWebsocketClientRequestId(wsSessionKey),
+						};
+						logger.debug("responses.ws.body", {
+							modelId: model.id,
+							requestModel: parsedModelId.baseId,
+							sessionKey: wsSessionKey,
+							keys: Object.keys(wsRequestBody).sort(),
+							store: wsRequestBody.store,
+							hasPreviousResponseId: Object.prototype.hasOwnProperty.call(wsRequestBody, "previous_response_id"),
+							inputLength: Array.isArray(wsRequestBody.input) ? wsRequestBody.input.length : 0,
+							toolCount: Array.isArray(wsRequestBody.tools) ? wsRequestBody.tools.length : 0,
+						});
+						await (openaiResponsesApi as OpenaiResponsesWebsocketApi).sendOverWebsocket({
+							sessionKey: wsSessionKey,
+							baseUrl: normalizedBaseUrl,
+							headers: wsRequestHeaders,
+							requestBody: wsRequestBody,
+							progress: trackingProgress,
+							token,
+						});
+						wsHandled = true;
+					} catch (wsErr) {
+						if (wsErr instanceof WsUnsupportedError) {
+							this.forgetOpenAIResponsesWsSession(wsSessionKey);
+							if (wsUsedDeltaInput) {
+								requestBody.input = fullInput;
+								delete requestBody.previous_response_id;
+							}
+							logger.warn("responses.ws.fallback_to_http", {
+								modelId: model.id,
+								requestModel: parsedModelId.baseId,
+								error: wsErr.message,
+								usedDeltaInput: wsUsedDeltaInput,
+								httpFallbackInput: wsUsedDeltaInput ? "full" : "current",
+							});
+							// HTTP fallback cannot rely on WS session state.
+						} else {
+							throw wsErr;
+						}
+					}
+				}
+
+				if (!wsHandled) {
+					let response: Response;
+					let httpRequestBody = buildResponsesTransportBody("http");
+					try {
+						response = await sendRequest(httpRequestBody);
+					} catch (err) {
+						// Some Responses-compatible gateways don't support `previous_response_id`.
+						// Fall back to sending full history when the previous-response attempt fails.
+						const status = (err as { status?: unknown })?.status;
+						const shouldFallback =
+							statefulPlan.addedPreviousResponseId &&
+							typeof status === "number" &&
+							status >= 400 &&
+							status < 500 &&
+							status !== 429;
+						if (!shouldFallback) {
+							throw err;
+						}
+
+						this._openaiResponsesPreviousResponseIdUnsupportedTargets.add(statefulPlan.unsupportedKey);
+
+						let fallbackBody: Record<string, unknown> = {
+							model: parsedModelId.baseId,
+							input: fullInput,
+							stream: true,
+						};
+						fallbackBody = openaiResponsesApi.prepareRequestBody(fallbackBody, um, options);
+						delete fallbackBody.previous_response_id;
+						fallbackBody = openaiResponsesApi.sanitizeRequestBody(fallbackBody, "http");
+						response = await sendRequest(fallbackBody);
 					}
 
-					this._openaiResponsesPreviousResponseIdUnsupportedTargets.add(statefulPlan.unsupportedKey);
-
-					let fallbackBody: Record<string, unknown> = {
-						model: parsedModelId.baseId,
-						input: fullInput,
-						stream: true,
-					};
-					fallbackBody = openaiResponsesApi.prepareRequestBody(fallbackBody, um, options);
-					delete fallbackBody.previous_response_id;
-					response = await sendRequest(fallbackBody);
+					if (!response.body) {
+						throw new Error("No response body from Responses API");
+					}
+					await openaiResponsesApi.processStreamingResponse(response.body, trackingProgress, token);
 				}
-
-				if (!response.body) {
-					throw new Error("No response body from Responses API");
-				}
-				await openaiResponsesApi.processStreamingResponse(response.body, trackingProgress, token);
 
 				// Append a stateful marker so future requests can reuse `previous_response_id` (Copilot Chat style).
 				const responseId = openaiResponsesApi.responseId;
@@ -444,6 +548,9 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						statefulCacheBucketKey,
 						upsertOpenAIResponsesStatefulCacheEntry(statefulCacheEntries, cacheEntry)
 					);
+					if (useWs && wsHandled) {
+						this.rememberOpenAIResponsesWsSession(responseId, wsSessionKey);
+					}
 					trackingProgress.report(createOpenAIResponsesStatefulMarkerPart(statefulModelId, responseId));
 				}
 			} else if (apiMode === "gemini") {
@@ -568,6 +675,30 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		}
 	}
 
+	private createOpenAIResponsesWsSessionKey(bucketKey: string): string {
+		this._openaiResponsesWsSessionSeq++;
+		return `${bucketKey}::ws-${Date.now().toString(36)}-${this._openaiResponsesWsSessionSeq.toString(36)}`;
+	}
+
+	private rememberOpenAIResponsesWsSession(responseId: string, sessionKey: string): void {
+		this._openaiResponsesWsSessionKeyByResponseId.set(responseId, sessionKey);
+		while (this._openaiResponsesWsSessionKeyByResponseId.size > 128) {
+			const oldest = this._openaiResponsesWsSessionKeyByResponseId.keys().next().value;
+			if (!oldest) {
+				break;
+			}
+			this._openaiResponsesWsSessionKeyByResponseId.delete(oldest);
+		}
+	}
+
+	private forgetOpenAIResponsesWsSession(sessionKey: string): void {
+		for (const [responseId, mappedSessionKey] of this._openaiResponsesWsSessionKeyByResponseId) {
+			if (mappedSessionKey === sessionKey) {
+				this._openaiResponsesWsSessionKeyByResponseId.delete(responseId);
+			}
+		}
+	}
+
 	/**
 	 * Ensure an API key exists in SecretStorage, optionally prompting the user when not silent.
 	 * @param useGenericKey If true, use generic API key.
@@ -578,7 +709,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		let apiKey: string | undefined;
 		if (provider && provider.trim() !== "") {
 			const normalizedProvider = provider.trim().toLowerCase();
-			const providerKey = `oaicopilot.apiKey.${normalizedProvider}`;
+			const providerKey = `oaicopilot-kong.apiKey.${normalizedProvider}`;
 			apiKey = await this.secrets.get(providerKey);
 
 			if (!apiKey && !useGenericKey) {
@@ -597,7 +728,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 		// Fall back to generic API key
 		if (!apiKey) {
-			apiKey = await this.secrets.get("oaicopilot.apiKey");
+			apiKey = await this.secrets.get("oaicopilot-kong.apiKey");
 		}
 
 		if (!apiKey && useGenericKey) {
@@ -609,7 +740,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			});
 			if (entered && entered.trim()) {
 				apiKey = entered.trim();
-				await this.secrets.store("oaicopilot.apiKey", apiKey);
+				await this.secrets.store("oaicopilot-kong.apiKey", apiKey);
 			}
 		}
 		return apiKey;
@@ -617,6 +748,15 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 }
 
 type OpenAIResponsesStatefulMarkerLocation = { marker: string; index: number };
+
+function createOpenAIResponsesWebsocketClientRequestId(sessionKey: string): string {
+	let hash = 2166136261;
+	for (let i = 0; i < sessionKey.length; i++) {
+		hash ^= sessionKey.charCodeAt(i);
+		hash = Math.imul(hash, 16777619);
+	}
+	return `oaicopilot-kong-${(hash >>> 0).toString(16)}`;
+}
 
 function createOpenAIResponsesStatefulMarkerPart(modelId: string, marker: string): vscode.LanguageModelDataPart {
 	const payload = `${modelId}\\${marker}`;

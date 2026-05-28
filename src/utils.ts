@@ -260,7 +260,7 @@ export function tryParseJSONObject(text: string): { ok: true; value: Record<stri
  */
 export function createRetryConfig(): RetryConfig {
 	const config = vscode.workspace.getConfiguration();
-	const retryConfig = config.get<RetryConfig>("oaicopilot.retry", {
+	const retryConfig = config.get<RetryConfig>("oaicopilot-kong.retry", {
 		enabled: true,
 		max_attempts: RETRY_MAX_ATTEMPTS,
 		interval_ms: RETRY_INTERVAL_MS,

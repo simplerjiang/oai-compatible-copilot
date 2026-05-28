@@ -1,5 +1,12 @@
 # Change Log
 
+## 1.0.0 (2026-05-27) — Kong fork
+
+- **Fork**: Rebranded as **OAICopilot-Kong**, an unofficial fork of `JohnnyZ93/oai-compatible-copilot` maintained by the Kong project. Not affiliated with the original author.
+- **Rename**: All extension namespaces moved from `oaicopilot.*` to `oaicopilot-kong.*` — commands, configuration keys, secrets, context keys, log directory, vendor id, and the stateful-marker MIME type. Display name is now `OAICopilot-Kong`.
+- **Migration**: On first activation the extension performs a one-time migration of global-scoped configuration keys (`logLevel`, `baseUrl`, `models`, `retry`, `delay`, `commitLanguage`, `commitMessagePrompt`, `readFileLines`) and secrets (top-level `apiKey` + per-provider `apiKey.<provider>`) from the upstream namespace. Gated on `globalState['oaicopilot-kong.migrationDone']` so it runs at most once.
+- **Feat**: New `openai-responses-ws` apiMode. Streams the OpenAI Responses API over a per-run reused WebSocket against cliproxy-style upstreams (`/v1/responses`), chaining multi-turn conversations via server-side `previous_response_id`. Falls back automatically to `openai-responses` HTTP on handshake/protocol failure, busy session, or upstream error frames. Idle sessions are closed after 30s.
+
 ## 0.4.2 (2026-05-19)
 
 - Feat(anthropic): Enable prompt caching. The system prompt and the last tool definition are now marked with `cache_control: { type: "ephemeral" }`, and in-message `cache_control` markers emitted by Copilot (`LanguageModelDataPart` with mimeType `"cache_control"`) are forwarded to Anthropic instead of being silently dropped. Add a per-model `cache_control` boolean (default `true`) to disable it for providers that reject the field.

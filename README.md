@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" alt="OAICopilot Logo" width="120" height="120">
 
-# OAI Compatible Provider for Copilot
+# OAICopilot-Kong (Kong fork of OAI Compatible Provider for Copilot)
 
 **A VSCode extension to use OpenAI/Ollama/Anthropic/Gemini API Providers in GitHub Copilot Chat** 🔥
 
@@ -10,11 +10,16 @@ English | [简体中文](README.zh-CN.md)
 
 </div>
 
-[![CI](https://github.com/JohnnyZ93/oai-compatible-copilot/actions/workflows/release.yml/badge.svg)](https://github.com/JohnnyZ93/oai-compatible-copilot/actions)
-[![License](https://img.shields.io/github/license/JohnnyZ93/oai-compatible-copilot?color=orange&label=License)](https://github.com/JohnnyZ93/oai-compatible-copilot/blob/main/LICENSE)
+> **Kong fork notice**
+> This is an unofficial fork of [`JohnnyZ93/oai-compatible-copilot`](https://github.com/JohnnyZ93/oai-compatible-copilot) maintained by the Kong project.
+> It is **not affiliated with or endorsed by the original author**. Issues filed here should not be reported upstream.
+> The main differences from upstream:
+> - All extension namespaces renamed `oaicopilot.*` → `oaicopilot-kong.*` (commands, configuration keys, secrets, context keys, log paths, vendor id, MIME types). A one-time migration on first activation copies your existing upstream config and secrets into the new namespace.
+> - New `openai-responses-ws` apiMode: streams the OpenAI Responses API over a per-run reused WebSocket against cliproxy-style upstreams (`/v1/responses`), chaining turns via `previous_response_id` on the server side. Automatically falls back to plain HTTP `openai-responses` on handshake/protocol failure.
 
 ## ✨ Features
 - **Multi-API support**: OpenAI/Ollama/Anthropic/Gemini APIs (ModelScope, SiliconFlow, DeepSeek...)
+- **WebSocket Responses transport**: Per-run WebSocket session reuse for cliproxy-style OpenAI Responses backends (`openai-responses-ws`), with transparent HTTP fallback.
 - **Vision models**: Full support for image understanding capabilities
 - **Advanced configuration**: Flexible chat request options with thinking/reasoning control
 - **Multi-provider management**: Configure models from multiple providers simultaneously with automatic API key management

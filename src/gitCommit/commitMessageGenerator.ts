@@ -148,11 +148,11 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
 	const startTime = Date.now();
 	let modelId: string | undefined;
 	try {
-		vscode.commands.executeCommand("setContext", "oaicopilot.isGeneratingCommit", true);
+		vscode.commands.executeCommand("setContext", "oaicopilot-kong.isGeneratingCommit", true);
 		const config = vscode.workspace.getConfiguration();
 
 		// Get custom prompts or use defaults
-		const customSystemPrompt = config.get<string>("oaicopilot.commitMessagePrompt", "");
+		const customSystemPrompt = config.get<string>("oaicopilot-kong.commitMessagePrompt", "");
 		const PROMPT = {
 			system: customSystemPrompt || DEFAULT_PROMPT.system,
 			user: DEFAULT_PROMPT.user,
@@ -171,7 +171,7 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
 		const prompt = prompts.join("\n\n");
 
 		// Get user models from configuration
-		const userModels = normalizeUserModels(config.get<unknown>("oaicopilot.models", []));
+		const userModels = normalizeUserModels(config.get<unknown>("oaicopilot-kong.models", []));
 
 		// Filter models that are marked for commit generation
 		const commitModels = userModels.filter((model: HFModelItem) => model.useForCommitGeneration === true);
@@ -194,13 +194,13 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
 		}
 
 		// Get base URL for the model
-		const baseUrl = selectedModel.baseUrl || config.get<string>("oaicopilot.baseUrl", "");
+		const baseUrl = selectedModel.baseUrl || config.get<string>("oaicopilot-kong.baseUrl", "");
 		if (!baseUrl || !baseUrl.startsWith("http")) {
 			throw new Error(`Invalid base URL configuration.`);
 		}
 
 		// Get commit language configuration
-		const commitLanguage = config.get<string>("oaicopilot.commitLanguage", "English");
+		const commitLanguage = config.get<string>("oaicopilot-kong.commitLanguage", "English");
 
 		// Create a system prompt with language instruction
 		const systemPrompt = PROMPT.system + ` Generate commit message in ${commitLanguage}.`;
@@ -216,7 +216,10 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
 			apiInstance = new AnthropicApi(modelId);
 		} else if (apiMode === "ollama") {
 			apiInstance = new OllamaApi(modelId);
-		} else if (apiMode === "openai-responses") {
+		} else if (apiMode === "openai-responses" || apiMode === "openai-responses-ws") {
+			// Commit generation is a one-shot, stateless turn; use the HTTP Responses path even
+			// when the model is normally served over WebSocket. Avoids spinning up a per-call WS
+			// session for a short prompt.
 			apiInstance = new OpenaiResponsesApi(modelId);
 		} else {
 			// Default to OpenAI-compatible API
@@ -247,13 +250,13 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
 		logger.error("commit.error", { modelId: modelId ?? "unknown", error: errorMessage });
 		vscode.window.showErrorMessage(`Failed to generate commit message: ${errorMessage}`);
 	} finally {
-		vscode.commands.executeCommand("setContext", "oaicopilot.isGeneratingCommit", false);
+		vscode.commands.executeCommand("setContext", "oaicopilot-kong.isGeneratingCommit", false);
 	}
 }
 
 export function abortCommitGeneration() {
 	commitGenerationAbortController?.abort();
-	vscode.commands.executeCommand("setContext", "oaicopilot.isGeneratingCommit", false);
+	vscode.commands.executeCommand("setContext", "oaicopilot-kong.isGeneratingCommit", false);
 }
 
 /**
@@ -282,13 +285,13 @@ async function ensureApiKey(secrets: vscode.SecretStorage, provider: string): Pr
 	let apiKey: string | undefined;
 	if (provider && provider.trim() !== "") {
 		const normalizedProvider = provider.trim().toLowerCase();
-		const providerKey = `oaicopilot.apiKey.${normalizedProvider}`;
+		const providerKey = `oaicopilot-kong.apiKey.${normalizedProvider}`;
 		apiKey = await secrets.get(providerKey);
 	}
 
 	// Fall back to generic API key
 	if (!apiKey) {
-		apiKey = await secrets.get("oaicopilot.apiKey");
+		apiKey = await secrets.get("oaicopilot-kong.apiKey");
 	}
 
 	return apiKey;
