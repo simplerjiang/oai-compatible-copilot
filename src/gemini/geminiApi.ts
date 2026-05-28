@@ -3,7 +3,6 @@ import {
 	CancellationToken,
 	LanguageModelChatRequestMessage,
 	ProvideLanguageModelChatResponseOptions,
-	LanguageModelResponsePart2,
 	Progress,
 } from "vscode";
 
@@ -12,6 +11,7 @@ import type { OpenAIFunctionToolDef } from "../openai/openaiTypes";
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
+import type { LanguageModelProgressPart } from "../vscodeLanguageModelCompat";
 
 import {
 	isImageMimeType,
@@ -766,7 +766,7 @@ export class GeminiApi extends CommonApi<GeminiChatMessage, GeminiGenerateConten
 
 	async processStreamingResponse(
 		responseBody: ReadableStream<Uint8Array>,
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelProgressPart>,
 		token: CancellationToken
 	): Promise<void> {
 		const modelId = this._modelId;

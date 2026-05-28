@@ -3,7 +3,6 @@ import {
 	CancellationToken,
 	LanguageModelChatRequestMessage,
 	ProvideLanguageModelChatResponseOptions,
-	LanguageModelResponsePart2,
 	Progress,
 } from "vscode";
 
@@ -30,6 +29,11 @@ import {
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
+import {
+	getLanguageModelThinkingText,
+	isLanguageModelThinkingPart,
+	type LanguageModelProgressPart,
+} from "../vscodeLanguageModelCompat";
 
 export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unknown>> {
 	constructor(modelId: string) {
@@ -73,8 +77,8 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 					const callId = (part as { callId?: string }).callId ?? "";
 					const content = collectToolResultText(part as { content?: ReadonlyArray<unknown> });
 					toolResults.push({ callId, content });
-				} else if (part instanceof vscode.LanguageModelThinkingPart) {
-					const content = Array.isArray(part.value) ? part.value.join("") : part.value;
+				} else if (isLanguageModelThinkingPart(part)) {
+					const content = getLanguageModelThinkingText(part);
 					reasoningParts.push(content);
 				}
 			}
@@ -275,7 +279,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	 */
 	async processStreamingResponse(
 		responseBody: ReadableStream<Uint8Array>,
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelProgressPart>,
 		token: CancellationToken
 	): Promise<void> {
 		const modelId = this._modelId;
@@ -351,7 +355,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 	 */
 	private async processDelta(
 		delta: Record<string, unknown>,
-		progress: Progress<LanguageModelResponsePart2>
+		progress: Progress<LanguageModelProgressPart>
 	): Promise<boolean> {
 		let emitted = false;
 		const choice = (delta.choices as Record<string, unknown>[] | undefined)?.[0];

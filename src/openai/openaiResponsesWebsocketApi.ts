@@ -2,10 +2,11 @@
 import * as crypto from "crypto";
 import * as net from "net";
 import * as tls from "tls";
-import type { CancellationToken, LanguageModelResponsePart2, Progress } from "vscode";
+import type { CancellationToken, Progress } from "vscode";
 import { WebSocket, type RawData as WsRawData } from "ws";
 import { logger } from "../logger";
 import { OpenaiResponsesApi } from "./openaiResponsesApi";
+import type { LanguageModelProgressPart } from "../vscodeLanguageModelCompat";
 
 /**
  * Thrown when the WebSocket transport cannot be used and the caller should
@@ -435,7 +436,7 @@ export class OpenaiResponsesWebsocketApi extends OpenaiResponsesApi {
 		baseUrl: string;
 		headers: Record<string, string>;
 		requestBody: Record<string, unknown>;
-		progress: Progress<LanguageModelResponsePart2>;
+		progress: Progress<LanguageModelProgressPart>;
 		token: CancellationToken;
 	}): Promise<void> {
 		const { sessionKey, baseUrl, headers, progress, token } = args;

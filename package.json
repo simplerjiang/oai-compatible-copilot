@@ -28,7 +28,7 @@
 		"type": "git",
 		"url": "https://github.com/simplerjiang/CLIProxyAPI"
 	},
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"engines": {
 		"vscode": "^1.120.0"
 	},
@@ -40,9 +40,6 @@
 		"url": "https://github.com/simplerjiang/CLIProxyAPI/issues"
 	},
 	"license": "MIT",
-	"enabledApiProposals": [
-		"chatProvider"
-	],
 	"contributes": {
 		"languageModelChatProviders": [
 			{
@@ -108,18 +105,18 @@
 			"title": "OAICopilot-Kong",
 			"properties": {
 				"oaicopilot-kong.logLevel": {
-				"type": "string",
-				"default": "off",
-				"enum": [
-					"off",
-					"debug",
-					"info",
-					"warn",
-					"error"
-				],
-				"description": "Debug log level. Logs are written to ~/.copilot/oaicopilot-kong/logs/ as JSON lines. Default is 'off' (no logging)."
-			},
-			"oaicopilot-kong.baseUrl": {
+					"type": "string",
+					"default": "off",
+					"enum": [
+						"off",
+						"debug",
+						"info",
+						"warn",
+						"error"
+					],
+					"description": "Debug log level. Logs are written to ~/.copilot/oaicopilot-kong/logs/ as JSON lines. Default is 'off' (no logging)."
+				},
+				"oaicopilot-kong.baseUrl": {
 					"type": "string",
 					"default": "https://router.huggingface.co/v1",
 					"description": "The base URL for the Openai Compatible Inference API. Default value is Hugging Face."
@@ -464,7 +461,6 @@
 	"main": "./out/extension.js",
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
-		"download-api": "dts dev && mv vscode.proposed.*.ts src",
 		"compile": "tsc -p ./",
 		"lint": "eslint",
 		"format": "prettier --write .",
@@ -479,11 +475,10 @@
 	"devDependencies": {
 		"@eslint/js": "^9.13.0",
 		"@stylistic/eslint-plugin": "^2.9.0",
-		"@types/node": "^22",
 		"@types/mocha": "^10.0.6",
+		"@types/node": "^22",
+		"@types/vscode": "^1.120.0",
 		"@types/ws": "^8.5.13",
-		"@vscode/dts": "^0.4.1",
-		"@types/vscode": "^1.104.0",
 		"@vscode/test-cli": "^0.0.11",
 		"@vscode/test-electron": "^2.5.2",
 		"eslint": "^9.13.0",

@@ -3,8 +3,6 @@ import {
 	ProvideLanguageModelChatResponseOptions,
 	LanguageModelChatRequestMessage,
 	LanguageModelToolCallPart,
-	LanguageModelResponsePart2,
-	LanguageModelThinkingPart,
 	Progress,
 	CancellationToken,
 } from "vscode";
@@ -12,6 +10,7 @@ import { HFModelItem, CustomDataPartMimeTypes, TokenUsage } from "./types";
 import { tryParseJSONObject } from "./utils";
 import { logger } from "./logger";
 import { VersionManager } from "./versionManager";
+import { createLanguageModelThinkingPart, type LanguageModelProgressPart } from "./vscodeLanguageModelCompat";
 
 export abstract class CommonApi<TMessage, TRequestBody> {
 	/** Buffer for assembling streamed tool calls by index. */
@@ -92,7 +91,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 */
 	abstract processStreamingResponse(
 		responseBody: ReadableStream<Uint8Array>,
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelProgressPart>,
 		token: CancellationToken
 	): Promise<void>;
 
@@ -120,7 +119,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 */
 	protected async tryEmitBufferedToolCall(
 		index: number,
-		progress: Progress<LanguageModelResponsePart2>
+		progress: Progress<LanguageModelProgressPart>
 	): Promise<void> {
 		const buf = this._toolCallBuffers.get(index);
 		if (!buf) {
@@ -147,7 +146,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * @param throwOnInvalid If true, throw when a tool call has invalid JSON args.
 	 */
 	protected async flushToolCallBuffers(
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelProgressPart>,
 		throwOnInvalid: boolean
 	): Promise<void> {
 		if (this._toolCallBuffers.size === 0) {
@@ -206,7 +205,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * Report to VS Code for ending thinking
 	 * @param progress Progress reporter for parts
 	 */
-	protected reportEndThinking(progress: Progress<LanguageModelResponsePart2>) {
+	protected reportEndThinking(progress: Progress<LanguageModelProgressPart>) {
 		if (!this._currentThinkingId) {
 			return;
 		}
@@ -214,7 +213,10 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 		try {
 			this.flushThinkingBuffer(progress);
 			// End the current thinking sequence with empty content and same ID
-			progress.report(new LanguageModelThinkingPart("", this._currentThinkingId));
+			const part = createLanguageModelThinkingPart("", this._currentThinkingId);
+			if (part) {
+				progress.report(part);
+			}
 		} catch (e) {
 			console.error("[OAI Compatible Model Provider] Failed to end thinking sequence:", e);
 		}
@@ -239,7 +241,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * @param text The thinking text to buffer
 	 * @param progress Progress reporter for parts
 	 */
-	protected bufferThinkingContent(text: string, progress: Progress<LanguageModelResponsePart2>): void {
+	protected bufferThinkingContent(text: string, progress: Progress<LanguageModelProgressPart>): void {
 		this._hasEmittedThinking = true;
 		// Generate thinking ID if not provided by the model
 		if (!this._currentThinkingId) {
@@ -261,7 +263,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * Flush the thinking buffer to the progress reporter.
 	 * @param progress Progress reporter for parts.
 	 */
-	protected flushThinkingBuffer(progress: Progress<LanguageModelResponsePart2>): void {
+	protected flushThinkingBuffer(progress: Progress<LanguageModelProgressPart>): void {
 		// Always clear existing timer first
 		if (this._thinkingFlushTimer) {
 			clearTimeout(this._thinkingFlushTimer);
@@ -272,7 +274,10 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 		if (this._thinkingBuffer && this._currentThinkingId) {
 			const text = this._thinkingBuffer;
 			this._thinkingBuffer = "";
-			progress.report(new LanguageModelThinkingPart(text, this._currentThinkingId));
+			const part = createLanguageModelThinkingPart(text, this._currentThinkingId);
+			if (part) {
+				progress.report(part);
+			}
 		}
 	}
 
@@ -318,7 +323,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * Process streamed text content for inline tool-call control tokens and emit text/tool calls.
 	 * Returns which parts were emitted for logging/flow control.
 	 */
-	protected processTextContent(input: string, progress: Progress<LanguageModelResponsePart2>): { emittedAny: boolean } {
+	protected processTextContent(input: string, progress: Progress<LanguageModelProgressPart>): { emittedAny: boolean } {
 		let emittedAny = false;
 
 		// Emit any visible text
@@ -337,7 +342,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 */
 	protected processXmlThinkBlocks(
 		input: string,
-		progress: Progress<LanguageModelResponsePart2>
+		progress: Progress<LanguageModelProgressPart>
 	): { emittedAny: boolean } {
 		// If we've already attempted detection and found no THINK_START, skip processing
 		if (this._xmlThinkDetectionAttempted && !this._xmlThinkActive) {
@@ -396,7 +401,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 	 * Report accumulated token usage as a LanguageModelDataPart so VS Code
 	 * can display usage stats in the Context Window widget.
 	 */
-	protected reportUsage(progress: Progress<LanguageModelResponsePart2>): void {
+	protected reportUsage(progress: Progress<LanguageModelProgressPart>): void {
 		if (!this._usage) {
 			return;
 		}

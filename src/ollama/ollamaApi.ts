@@ -3,7 +3,6 @@ import {
 	CancellationToken,
 	LanguageModelChatRequestMessage,
 	ProvideLanguageModelChatResponseOptions,
-	LanguageModelResponsePart2,
 	Progress,
 } from "vscode";
 
@@ -15,6 +14,11 @@ import { isToolResultPart, collectToolResultText, convertToolsToOpenAI, mapRole 
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
+import {
+	getLanguageModelThinkingText,
+	isLanguageModelThinkingPart,
+	type LanguageModelProgressPart,
+} from "../vscodeLanguageModelCompat";
 
 export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 	constructor(modelId: string) {
@@ -49,9 +53,9 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 						const base64Data = Buffer.from(part.data).toString("base64");
 						imageParts.push(base64Data);
 					}
-				} else if (part instanceof vscode.LanguageModelThinkingPart) {
+				} else if (isLanguageModelThinkingPart(part)) {
 					// Capture thinking content
-					const content = Array.isArray(part.value) ? part.value.join("") : part.value;
+					const content = getLanguageModelThinkingText(part);
 					thinkingContent += content;
 				} else if (part instanceof vscode.LanguageModelToolCallPart) {
 					// Capture tool calls from assistant
@@ -164,7 +168,7 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 	 */
 	async processStreamingResponse(
 		responseBody: ReadableStream<Uint8Array>,
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelProgressPart>,
 		token: CancellationToken
 	): Promise<void> {
 		const modelId = this._modelId;
@@ -244,7 +248,7 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 	 */
 	private async processOllamaDelta(
 		chunk: OllamaStreamChunk,
-		progress: Progress<LanguageModelResponsePart2>
+		progress: Progress<LanguageModelProgressPart>
 	): Promise<void> {
 		const message = chunk.message;
 		if (!message) {

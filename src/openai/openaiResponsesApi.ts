@@ -3,7 +3,6 @@ import {
 	CancellationToken,
 	LanguageModelChatRequestMessage,
 	ProvideLanguageModelChatResponseOptions,
-	LanguageModelResponsePart2,
 	Progress,
 } from "vscode";
 
@@ -22,6 +21,11 @@ import {
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
+import {
+	getLanguageModelThinkingText,
+	isLanguageModelThinkingPart,
+	type LanguageModelProgressPart,
+} from "../vscodeLanguageModelCompat";
 
 export type OpenAIResponsesTransport = "http" | "websocket";
 
@@ -129,8 +133,8 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 					const callId = (part as { callId?: string }).callId ?? "";
 					const content = collectToolResultText(part as { content?: ReadonlyArray<unknown> });
 					toolResults.push({ callId, content });
-				} else if (part instanceof vscode.LanguageModelThinkingPart && modelConfig.includeReasoningInRequest) {
-					const content = Array.isArray(part.value) ? part.value.join("") : part.value;
+				} else if (isLanguageModelThinkingPart(part) && modelConfig.includeReasoningInRequest) {
+					const content = getLanguageModelThinkingText(part);
 					thinkingParts.push(content);
 				}
 			}
@@ -341,7 +345,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 
 	async processStreamingResponse(
 		responseBody: ReadableStream<Uint8Array>,
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelProgressPart>,
 		token: CancellationToken
 	): Promise<void> {
 		this._responseId = null;
@@ -442,7 +446,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 		);
 	}
 
-	private processOutputTextChunk(text: string, progress: Progress<LanguageModelResponsePart2>): void {
+	private processOutputTextChunk(text: string, progress: Progress<LanguageModelProgressPart>): void {
 		if (!text) {
 			return;
 		}
@@ -463,7 +467,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 
 	private async processEvent(
 		event: Record<string, unknown>,
-		progress: Progress<LanguageModelResponsePart2>
+		progress: Progress<LanguageModelProgressPart>
 	): Promise<void> {
 		const eventType = typeof event.type === "string" ? event.type : "";
 		if (!eventType) {
@@ -692,7 +696,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 
 	private processReasoningText(
 		event: Record<string, unknown>,
-		progress: vscode.Progress<vscode.LanguageModelResponsePart2>
+		progress: vscode.Progress<LanguageModelProgressPart>
 	) {
 		const candidates = [
 			this.coerceText(event.delta),

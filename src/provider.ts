@@ -5,7 +5,6 @@ import {
 	LanguageModelChatProvider,
 	LanguageModelChatRequestMessage,
 	ProvideLanguageModelChatResponseOptions,
-	LanguageModelResponsePart2,
 	Progress,
 } from "vscode";
 
@@ -40,6 +39,7 @@ import { GeminiApi, buildGeminiGenerateContentUrl, type GeminiToolCallMeta } fro
 import type { GeminiGenerateContentRequest } from "./gemini/geminiTypes";
 import { CommonApi } from "./commonApi";
 import { logger } from "./logger";
+import type { LanguageModelProgressPart } from "./vscodeLanguageModelCompat";
 
 /**
  * VS Code Chat provider backed by Hugging Face Inference Providers.
@@ -110,10 +110,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		model: LanguageModelChatInformation,
 		messages: readonly LanguageModelChatRequestMessage[],
 		options: ProvideLanguageModelChatResponseOptions,
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelProgressPart>,
 		token: CancellationToken
 	): Promise<void> {
-		const trackingProgress: Progress<LanguageModelResponsePart2> = {
+		const trackingProgress: Progress<LanguageModelProgressPart> = {
 			report: (part) => {
 				try {
 					progress.report(part);
@@ -218,7 +218,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				headers: logger.sanitizeHeaders(requestHeaders as Record<string, string>),
 			});
 			logger.debug("request.messages.origin", {
-				messages: messages,
+				messages,
 			});
 			if (apiMode === "ollama") {
 				// Ollama native API mode
