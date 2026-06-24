@@ -17,5 +17,6 @@ eslint.config.mjs
 AGENTS.md
 CLAUDE.md
 .doc/**
+_legacy_rename_*.py
 _kong_rename_*.py
 *.vsix

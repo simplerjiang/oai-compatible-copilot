@@ -50,7 +50,7 @@ export interface HFModelItem {
 	/**
 	 * Optional family specification for the model. This allows users to specify
 	 * the model family (e.g., "gpt-4", "claude-3", "gemini") to enable family-specific
-	 * optimizations and behaviors in the Copilot extension. If not specified,
+	 * optimizations and behaviors in the host extension. If not specified,
 	 * defaults to "oai-compatible".
 	 */
 	family?: string;
@@ -91,7 +91,7 @@ export interface HFModelItem {
 
 	/**
 	 * Model-specific delay in milliseconds between consecutive requests.
-	 * If not specified, falls back to global `oaicopilot-kong.delay` configuration.
+	 * If not specified, falls back to global `kong-chat-bridge.delay` configuration.
 	 */
 	delay?: number;
 
@@ -101,7 +101,7 @@ export interface HFModelItem {
 	 * When enabled, the provider will:
 	 *   - Convert `system` into a structured array and mark it with `cache_control: { type: "ephemeral" }`.
 	 *   - Mark the last entry of `tools` with `cache_control: { type: "ephemeral" }`.
-	 *   - Honor in-message `cache_control` markers emitted by the host (Copilot) — i.e. a
+	 *   - Honor in-message `cache_control` markers emitted by the host — i.e. a
 	 *     `LanguageModelDataPart` with `mimeType === "cache_control"` is converted to a real
 	 *     Anthropic `cache_control` field on the preceding content block.
 	 *
@@ -160,14 +160,14 @@ export type HFApiMode = "openai" | "openai-responses" | "openai-responses-ws" | 
 /**
  * Custom data part MIME types for vscode.LanguageModelDataPart
  */
-export namespace CustomDataPartMimeTypes {
-	export const CacheControl = "cache_control";
-	export const StatefulMarker = "stateful_marker";
-	export const ThinkingData = "thinking";
-	export const ContextManagement = "context_management";
-	export const PhaseData = "phase_data";
-	export const Usage = "usage";
-}
+export const CustomDataPartMimeTypes = {
+	CacheControl: "cache_control",
+	StatefulMarker: "stateful_marker",
+	ThinkingData: "thinking",
+	ContextManagement: "context_management",
+	PhaseData: "phase_data",
+	Usage: "usage",
+} as const;
 
 /**
  * Standard OpenAI token usage details.

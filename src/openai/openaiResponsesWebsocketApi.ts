@@ -262,7 +262,7 @@ async function openRawWebSocket(wsUrl: string, headers: Record<string, string>):
 
 /**
  * Convert an HTTP(S) base URL to a WebSocket URL pointing at the `/responses` WS endpoint
- * exposed by cliproxy-style upstreams. The cliproxy server registers the WS handler at
+ * exposed by kong-style upstreams. The kong server registers the WS handler at
  * `GET /v1/responses` (no `/ws` suffix), so we must NOT append `/ws`.
  *  - `https://host/v1`            -> `wss://host/v1/responses`
  *  - `http://host/v1`             -> `ws://host/v1/responses`

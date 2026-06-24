@@ -25,7 +25,7 @@ async function sendProbe(
 			}],
 			stream: true,
 			store: false,
-			prompt_cache_key: "oaicopilot-kong-gpt-5.5",
+			prompt_cache_key: "kong-chat-bridge-gpt-5.5",
 			reasoning: { effort: "high" },
 			service_tier: "priority",
 		};
@@ -37,8 +37,8 @@ async function sendProbe(
 			baseUrl: "http://165.232.161.99/v1",
 			headers: {
 				Authorization: `Bearer ${key}`,
-				"User-Agent": "oaicopilot-kong/1.0.0 VSCode/1.122.0",
-				"X-Client-Request-Id": `oaicopilot-kong-probe-${sessionKey}`,
+				"User-Agent": "kong-chat-bridge/1.0.0 VSCode/1.122.0",
+				"X-Client-Request-Id": `kong-chat-bridge-probe-${sessionKey}`,
 			},
 			requestBody,
 			progress: {

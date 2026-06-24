@@ -43,7 +43,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 
 	/**
 	 * Decode a `LanguageModelDataPart` whose `mimeType` is `"cache_control"` into a real
-	 * Anthropic `cache_control` value. The host (Copilot) encodes the breakpoint payload as a
+	 * Anthropic `cache_control` value. The host encodes the breakpoint payload as a
 	 * UTF-8 JSON string (e.g. `{"type":"ephemeral"}`). Falls back to `{type:"ephemeral"}` if
 	 * the payload is empty or malformed.
 	 */
@@ -87,7 +87,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			const toolCalls: AnthropicToolUseBlock[] = [];
 			const toolResults: AnthropicToolResultBlock[] = [];
 			const thinkingParts: string[] = [];
-			// Cache breakpoints emitted by the host (Copilot) via LanguageModelDataPart(mimeType="cache_control").
+			// Cache breakpoints emitted by the host via LanguageModelDataPart(mimeType="cache_control").
 			// We mark the position in the constructed content-block list where each breakpoint should land.
 			// Breakpoints appearing before any other content fall back to the first block; after-all
 			// breakpoints fall back to the last block. Multiple breakpoints in the same message are honored,
@@ -233,7 +233,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 
 		// Add system content if we extracted it. When caching is enabled, emit the system prompt
 		// as a structured `text` block array carrying a `cache_control` breakpoint — without this,
-		// Anthropic will never cache the (often very long) Copilot system prompt and every turn pays
+		// Anthropic will never cache the (often very long) host system prompt and every turn pays
 		// full input cost. The string form remains the fallback when caching is disabled.
 		if (this._systemContent) {
 			if (this._cacheControlEnabled) {
@@ -304,7 +304,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			}
 		}
 
-		// Anthropic accepts at most 4 `cache_control` breakpoints per request. The host (Copilot)
+		// Anthropic accepts at most 4 `cache_control` breakpoints per request. The host
 		// may emit several breakpoints inside `messages` via its own caching strategy; combined with
 		// the system + last-tool breakpoints we add above, the total can exceed the cap and the API
 		// returns 400. Strip the *earliest* in-message breakpoints first — Anthropic's cache lookup

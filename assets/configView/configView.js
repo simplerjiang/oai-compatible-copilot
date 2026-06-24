@@ -5,6 +5,7 @@ const state = {
 	delay: 0,
 	retry: { enabled: true, max_attempts: 3, interval_ms: 1000, status_codes: [429, 500, 502, 503, 504] },
 	commitModel: "",
+	copilotUtilitySmallFallbackModel: "",
 	models: [],
 	providerKeys: {},
 	providerInfo: {},
@@ -66,6 +67,7 @@ const cancelModelBtn = document.getElementById("cancelModel");
 const toggleAdvancedSettingsBtn = document.getElementById("toggleAdvancedSettings");
 const commitModelInput = document.getElementById("commitModel");
 const commitLanguageInput = document.getElementById("commitLanguage");
+const copilotUtilitySmallFallbackModelInput = document.getElementById("copilotUtilitySmallFallbackModel");
 const advancedSettingsContent = document.getElementById("advancedSettingsContent");
 
 // Error message element
@@ -98,6 +100,7 @@ document.getElementById("saveBase").addEventListener("click", () => {
 		retry: retry,
 		commitModel: commitModelInput.value,
 		commitLanguage: commitLanguageInput.value,
+		copilotUtilitySmallFallbackModel: copilotUtilitySmallFallbackModelInput.value,
 	});
 });
 
@@ -273,8 +276,18 @@ window.addEventListener("message", (event) => {
 
 	switch (message.type) {
 		case "init":
-			const { baseUrl, apiKey, delay, readFileLines, retry, commitModel, models, providerKeys, commitLanguage } =
-				message.payload;
+			const {
+				baseUrl,
+				apiKey,
+				delay,
+				readFileLines,
+				retry,
+				commitModel,
+				models,
+				providerKeys,
+				commitLanguage,
+				copilotUtilitySmallFallbackModel,
+			} = message.payload;
 			state.baseUrl = baseUrl;
 			state.apiKey = apiKey;
 			state.delay = delay || 0;
@@ -287,6 +300,7 @@ window.addEventListener("message", (event) => {
 			};
 			state.models = models || [];
 			state.commitModel = commitModel || "";
+			state.copilotUtilitySmallFallbackModel = copilotUtilitySmallFallbackModel || "";
 			state.providerKeys = providerKeys || {};
 
 			// Update base configuration
@@ -301,7 +315,9 @@ window.addEventListener("message", (event) => {
 
 			// Populate commit model dropdown and select current commit model
 			populateCommitModelDropdown();
+			populateCopilotUtilityFallbackDropdown();
 			commitModelInput.value = state.commitModel || "";
+			copilotUtilitySmallFallbackModelInput.value = state.copilotUtilitySmallFallbackModel || "";
 			commitLanguageInput.value = commitLanguage;
 
 			// Render provider and model management
@@ -316,7 +332,7 @@ window.addEventListener("message", (event) => {
 			// Handle error from fetchModels
 			dropdownHeader.textContent = "Error fetching models";
 			dropdownContent.innerHTML = `<div class="dropdown-option error">Failed to fetch models. Check the Developer Console for details.</div>`;
-			console.error("[oaicopilot-kong] Failed to fetch models:", message.error);
+			console.error("[kong-chat-bridge] Failed to fetch models:", message.error);
 			break;
 		case "confirmResponse":
 			// Handle confirmation responses
@@ -834,6 +850,24 @@ function populateCommitModelDropdown() {
 		option.value = fullModelId;
 		option.textContent = model.displayName || fullModelId;
 		commitModelInput.appendChild(option);
+	});
+}
+
+function populateCopilotUtilityFallbackDropdown() {
+	while (copilotUtilitySmallFallbackModelInput.children.length > 1) {
+		copilotUtilitySmallFallbackModelInput.removeChild(copilotUtilitySmallFallbackModelInput.lastChild);
+	}
+
+	const compatibleModels = state.models
+		.filter((model) => !model.id.startsWith("__provider__"))
+		.sort((a, b) => a.id.localeCompare(b.id));
+
+	compatibleModels.forEach((model) => {
+		const option = document.createElement("option");
+		const fullModelId = `${model.id}${model.configId ? "::" + model.configId : ""}`;
+		option.value = fullModelId;
+		option.textContent = model.displayName || fullModelId;
+		copilotUtilitySmallFallbackModelInput.appendChild(option);
 	});
 }
 

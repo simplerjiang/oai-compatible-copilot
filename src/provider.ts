@@ -14,7 +14,7 @@ import type { OllamaRequestBody } from "./ollama/ollamaTypes";
 
 import { parseModelId, createRetryConfig, executeWithRetry, normalizeUserModels } from "./utils";
 
-import { prepareLanguageModelChatInformation } from "./provideModel";
+import { prepareLanguageModelChatInformation, sourceModelIdForCopilotUtilityAlias } from "./provideModel";
 import { countMessageTokens } from "./provideToken";
 import { updateContextStatusBar } from "./statusBar";
 import { OllamaApi } from "./ollama/ollamaApi";
@@ -57,7 +57,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	private readonly _openaiResponsesWsSessionKeyByResponseId = new Map<string, string>();
 	private _openaiResponsesWsSessionSeq = 0;
 
-	static readonly OPENAI_RESPONSES_STATEFUL_MARKER_MIME = "application/vnd.oaicopilot-kong.stateful-marker";
+	static readonly OPENAI_RESPONSES_STATEFUL_MARKER_MIME = "application/vnd.kong-chat-bridge.stateful-marker";
 
 	/**
 	 * Create a provider using the given secret storage for the API key.
@@ -118,7 +118,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				try {
 					progress.report(part);
 				} catch (e) {
-					console.error("[OAI Compatible Model Provider] Progress.report failed", {
+					console.error("[Kong Bridge Model Provider] Progress.report failed", {
 						modelId: model.id,
 						error: e instanceof Error ? { name: e.name, message: e.message } : String(e),
 					});
@@ -129,10 +129,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		try {
 			// get model config from user settings
 			const config = vscode.workspace.getConfiguration();
-			const userModels = normalizeUserModels(config.get<unknown>("oaicopilot-kong.models", []));
+			const userModels = normalizeUserModels(config.get<unknown>("kong-chat-bridge.models", []));
 
 			// Parse model ID to handle config ID
-			const parsedModelId = parseModelId(model.id);
+			const requestModelId = sourceModelIdForCopilotUtilityAlias(model.id);
+			const parsedModelId = parseModelId(requestModelId);
 
 			// Find matching user model configuration
 			// Prioritize matching models with same base ID and config ID
@@ -151,7 +152,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 			// Check if using Ollama native API mode
 			const apiMode = um?.apiMode ?? "openai";
-			const baseUrl = um?.baseUrl || config.get<string>("oaicopilot-kong.baseUrl", "");
+			const baseUrl = um?.baseUrl || config.get<string>("kong-chat-bridge.baseUrl", "");
 
 			logger.info("request.start", {
 				modelId: model.id,
@@ -170,7 +171,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 			// Apply delay between consecutive requests
 			const modelDelay = um?.delay;
-			const globalDelay = config.get<number>("oaicopilot-kong.delay", 0);
+			const globalDelay = config.get<number>("kong-chat-bridge.delay", 0);
 			const delayMs = modelDelay !== undefined ? modelDelay : globalDelay;
 
 			if (delayMs > 0 && this._lastRequestTime !== null) {
@@ -200,7 +201,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					provider: provider ?? "",
 					useGenericKey,
 				});
-				throw new Error("OAI Compatible API key not found");
+				throw new Error("Kong Bridge API key not found");
 			}
 
 			// send chat request
@@ -222,7 +223,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			});
 			if (apiMode === "ollama") {
 				// Ollama native API mode
-				const ollamaApi = new OllamaApi(model.id);
+				const ollamaApi = new OllamaApi(requestModelId);
 				const ollamaMessages = ollamaApi.convertMessages(messages, modelConfig);
 
 				let ollamaRequestBody: OllamaRequestBody = {
@@ -262,7 +263,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				await ollamaApi.processStreamingResponse(response.body, trackingProgress, token);
 			} else if (apiMode === "anthropic") {
 				// Anthropic API mode
-				const anthropicApi = new AnthropicApi(model.id, um?.cache_control !== false);
+				const anthropicApi = new AnthropicApi(requestModelId, um?.cache_control !== false);
 				const anthropicMessages = anthropicApi.convertMessages(messages, modelConfig);
 
 				// requestBody
@@ -307,8 +308,8 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// OpenAI Responses API mode (HTTP or per-run WebSocket transport).
 				const useWs = apiMode === "openai-responses-ws";
 				const openaiResponsesApi: OpenaiResponsesApi = useWs
-					? new OpenaiResponsesWebsocketApi(model.id)
-					: new OpenaiResponsesApi(model.id);
+					? new OpenaiResponsesWebsocketApi(requestModelId)
+					: new OpenaiResponsesApi(requestModelId);
 				const normalizedBaseUrl = BASE_URL.replace(/\/+$/, "");
 				const statefulModelId = parsedModelId.baseId;
 
@@ -346,7 +347,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// Add prompt_cache_key to enable OpenAI prompt caching.
 				// Without this parameter, cached_tokens is always 0 even with identical requests.
 				if (!requestBody.prompt_cache_key) {
-					requestBody.prompt_cache_key = `oaicopilot-kong-${parsedModelId.baseId}`;
+					requestBody.prompt_cache_key = `kong-chat-bridge-${parsedModelId.baseId}`;
 				}
 				// send Responses API request with retry
 				const url = `${normalizedBaseUrl}/responses`;
@@ -504,7 +505,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 				if (!wsHandled) {
 					let response: Response;
-					let httpRequestBody = buildResponsesTransportBody("http");
+					const httpRequestBody = buildResponsesTransportBody("http");
 					try {
 						response = await sendRequest(httpRequestBody);
 					} catch (err) {
@@ -540,7 +541,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					await openaiResponsesApi.processStreamingResponse(response.body, trackingProgress, token);
 				}
 
-				// Append a stateful marker so future requests can reuse `previous_response_id` (Copilot Chat style).
+				// Append a stateful marker so future requests can reuse `previous_response_id` (chat host style).
 				const responseId = openaiResponsesApi.responseId;
 				if (responseId) {
 					const cacheEntry = createOpenAIResponsesStatefulCacheEntry(fullInput, responseId);
@@ -555,7 +556,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				}
 			} else if (apiMode === "gemini") {
 				// Gemini native API mode
-				const geminiApi = new GeminiApi(model.id, this._geminiToolCallMetaByCallId);
+				const geminiApi = new GeminiApi(requestModelId, this._geminiToolCallMetaByCallId);
 				const geminiMessages = geminiApi.convertMessages(messages, modelConfig);
 
 				const systemParts: string[] = [];
@@ -616,7 +617,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				await geminiApi.processStreamingResponse(response.body, trackingProgress, token);
 			} else {
 				// OpenAI compatible API mode (default)
-				const openaiApi = new OpenaiApi(model.id);
+				const openaiApi = new OpenaiApi(requestModelId);
 				const openaiMessages = openaiApi.convertMessages(messages, modelConfig);
 
 				// requestBody
@@ -640,9 +641,9 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 					if (!res.ok) {
 						const errorText = await res.text();
-						console.error("[OAI Compatible Model Provider] OAI Compatible API error response", errorText);
+						console.error("[Kong Bridge Model Provider] Kong Bridge API error response", errorText);
 						throw new Error(
-							`OAI Compatible API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}\nURL: ${url}`
+							`Kong Bridge API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}\nURL: ${url}`
 						);
 					}
 
@@ -650,12 +651,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				}, retryConfig);
 
 				if (!response.body) {
-					throw new Error("No response body from OAI Compatible API");
+					throw new Error("No response body from Kong Bridge API");
 				}
 				await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
 			}
 		} catch (err) {
-			console.error("[OAI Compatible Model Provider] Chat request failed", {
+			console.error("[Kong Bridge Model Provider] Chat request failed", {
 				modelId: model.id,
 				messageCount: messages.length,
 				error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
@@ -709,13 +710,13 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		let apiKey: string | undefined;
 		if (provider && provider.trim() !== "") {
 			const normalizedProvider = provider.trim().toLowerCase();
-			const providerKey = `oaicopilot-kong.apiKey.${normalizedProvider}`;
+			const providerKey = `kong-chat-bridge.apiKey.${normalizedProvider}`;
 			apiKey = await this.secrets.get(providerKey);
 
 			if (!apiKey && !useGenericKey) {
 				const entered = await vscode.window.showInputBox({
-					title: `OAI Compatible API Key for ${normalizedProvider}`,
-					prompt: `Enter your OAI Compatible API key for ${normalizedProvider}`,
+					title: `Kong Bridge API Key for ${normalizedProvider}`,
+					prompt: `Enter your Kong Bridge API key for ${normalizedProvider}`,
 					ignoreFocusOut: true,
 					password: true,
 				});
@@ -728,26 +729,29 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 		// Fall back to generic API key
 		if (!apiKey) {
-			apiKey = await this.secrets.get("oaicopilot-kong.apiKey");
+			apiKey = await this.secrets.get("kong-chat-bridge.apiKey");
 		}
 
 		if (!apiKey && useGenericKey) {
 			const entered = await vscode.window.showInputBox({
-				title: "OAI Compatible API Key",
-				prompt: "Enter your OAI Compatible API key",
+				title: "Kong Bridge API Key",
+				prompt: "Enter your Kong Bridge API key",
 				ignoreFocusOut: true,
 				password: true,
 			});
 			if (entered && entered.trim()) {
 				apiKey = entered.trim();
-				await this.secrets.store("oaicopilot-kong.apiKey", apiKey);
+				await this.secrets.store("kong-chat-bridge.apiKey", apiKey);
 			}
 		}
 		return apiKey;
 	}
 }
 
-type OpenAIResponsesStatefulMarkerLocation = { marker: string; index: number };
+interface OpenAIResponsesStatefulMarkerLocation {
+	marker: string;
+	index: number;
+}
 
 function createOpenAIResponsesWebsocketClientRequestId(sessionKey: string): string {
 	let hash = 2166136261;
@@ -755,7 +759,7 @@ function createOpenAIResponsesWebsocketClientRequestId(sessionKey: string): stri
 		hash ^= sessionKey.charCodeAt(i);
 		hash = Math.imul(hash, 16777619);
 	}
-	return `oaicopilot-kong-${(hash >>> 0).toString(16)}`;
+	return `kong-chat-bridge-${(hash >>> 0).toString(16)}`;
 }
 
 function createOpenAIResponsesStatefulMarkerPart(modelId: string, marker: string): vscode.LanguageModelDataPart {

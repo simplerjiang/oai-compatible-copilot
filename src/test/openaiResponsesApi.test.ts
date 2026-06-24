@@ -18,7 +18,7 @@ suite("openaiResponsesApi", () => {
 				prompt_cache_retention: "24h",
 				safety_identifier: "user-123",
 				store: true,
-				prompt_cache_key: "oaicopilot-kong-gpt-5.5",
+				prompt_cache_key: "kong-chat-bridge-gpt-5.5",
 				reasoning: { effort: "high" },
 				parallel_tool_calls: true,
 				text: { verbosity: "medium" },
@@ -32,7 +32,7 @@ suite("openaiResponsesApi", () => {
 			stream: true,
 			previous_response_id: "resp_previous",
 			store: false,
-			prompt_cache_key: "oaicopilot-kong-gpt-5.5",
+			prompt_cache_key: "kong-chat-bridge-gpt-5.5",
 			reasoning: { effort: "high" },
 			parallel_tool_calls: true,
 			text: { verbosity: "medium" },
@@ -57,7 +57,7 @@ suite("openaiResponsesApi", () => {
 				tool_choice: "auto",
 				tools: [{ type: "function", name: "example" }],
 				service_tier: "priority",
-				prompt_cache_key: "oaicopilot-kong-gpt-5.5",
+				prompt_cache_key: "kong-chat-bridge-gpt-5.5",
 			},
 			"http"
 		);
@@ -70,7 +70,7 @@ suite("openaiResponsesApi", () => {
 			tool_choice: "auto",
 			tools: [{ type: "function", name: "example" }],
 			service_tier: "priority",
-			prompt_cache_key: "oaicopilot-kong-gpt-5.5",
+			prompt_cache_key: "kong-chat-bridge-gpt-5.5",
 		});
 	});
 });

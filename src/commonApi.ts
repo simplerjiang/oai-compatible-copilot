@@ -158,7 +158,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 			const parsed = tryParseJSONObject(argsText);
 			if (!parsed.ok) {
 				if (throwOnInvalid) {
-					console.error("[OAI Compatible Model Provider] Invalid JSON for tool call", {
+					console.error("[Kong Bridge Model Provider] Invalid JSON for tool call", {
 						idx,
 						snippet: (buf.args || "").slice(0, 200),
 					});
@@ -188,7 +188,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 			return parameters;
 		}
 		const config = vscode.workspace.getConfiguration();
-		const defaultLines = config.get<number>("oaicopilot-kong.readFileLines", 0);
+		const defaultLines = config.get<number>("kong-chat-bridge.readFileLines", 0);
 		if (defaultLines <= 0) {
 			return parameters;
 		}
@@ -218,7 +218,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 				progress.report(part);
 			}
 		} catch (e) {
-			console.error("[OAI Compatible Model Provider] Failed to end thinking sequence:", e);
+			console.error("[Kong Bridge Model Provider] Failed to end thinking sequence:", e);
 		}
 		this._currentThinkingId = null;
 		// Clear thinking buffer and timer since sequence ended

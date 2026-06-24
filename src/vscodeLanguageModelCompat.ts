@@ -5,7 +5,7 @@ export type LanguageModelProgressPart = vscode.LanguageModelResponsePart;
 export interface LanguageModelThinkingPartLike {
 	value: string | string[];
 	id?: string;
-	metadata?: { readonly [key: string]: unknown };
+	metadata?: Readonly<Record<string, unknown>>;
 }
 
 export function isLanguageModelThinkingPart(part: unknown): part is LanguageModelThinkingPartLike {

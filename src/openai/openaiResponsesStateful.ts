@@ -54,7 +54,7 @@ function getLastModelSegment(value: string): string {
 	if (!normalized) {
 		return "";
 	}
-	const segments = normalized.split(/[\/:]/).filter(Boolean);
+	const segments = normalized.split(/[/:]/).filter(Boolean);
 	return segments.length > 0 ? segments[segments.length - 1] : normalized;
 }
 

@@ -62,7 +62,7 @@ export async function countMessageTokens(
 export async function textTokenLength(text: string): Promise<number> {
 	try {
 		return tokenizerManager.countTokens(text);
-	} catch (e) {
+	} catch {
 		return 0;
 	}
 }

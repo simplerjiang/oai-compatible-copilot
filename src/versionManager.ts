@@ -8,7 +8,7 @@ export class VersionManager {
 	 */
 	static getVersion(): string {
 		if (this._version === null) {
-			const extension = vscode.extensions.getExtension("kong-fork.oai-compatible-copilot-kong");
+			const extension = vscode.extensions.getExtension("simplerjiang.kong-chat-bridge");
 			this._version = extension?.packageJSON?.version ?? "unknown";
 		}
 		return this._version!;
@@ -20,7 +20,7 @@ export class VersionManager {
 	 */
 	static getUserAgent(): string {
 		const vscodeVersion = vscode.version;
-		return `oaicopilot-kong/${this.getVersion()} VSCode/${vscodeVersion}`;
+		return `kong-chat-bridge/${this.getVersion()} VSCode/${vscodeVersion}`;
 	}
 
 	/**
@@ -28,9 +28,9 @@ export class VersionManager {
 	 */
 	static getClientInfo(): { name: string; version: string; author: string } {
 		return {
-			name: "oai-compatible-copilot-kong",
+			name: "kong-chat-bridge",
 			version: this.getVersion(),
-			author: "johnny-zhao",
+			author: "simplerjiang",
 		};
 	}
 }

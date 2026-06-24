@@ -15,6 +15,32 @@ import type { HFModelItem } from "../types";
 
 let commitGenerationAbortController: AbortController | undefined;
 
+interface GitRepositoryLike {
+	rootUri: vscode.Uri;
+	inputBox: { value: string };
+}
+
+interface GitApiLike {
+	repositories: GitRepositoryLike[];
+	getRepository(rootUri: vscode.Uri): GitRepositoryLike | undefined;
+}
+
+interface CommitMessageApi {
+	createMessage(
+		model: HFModelItem,
+		systemPrompt: string,
+		messages: { role: string; content: string }[],
+		baseUrl: string,
+		apiKey: string
+	): AsyncGenerator<{ type: "text"; text: string }>;
+}
+
+interface RepositoryQuickPickItem {
+	label: string;
+	description: string;
+	repo: GitRepositoryLike | null;
+}
+
 const DEFAULT_PROMPT = {
 	system:
 		"You are a helpful assistant that generates informative git commit messages based on git diffs output. Skip preamble and remove all backticks surrounding the commit message.\nBased on the provided git diff, generate a conventional format commit message.",
@@ -28,13 +54,16 @@ export async function generateCommitMsg(secrets: vscode.SecretStorage, scm?: vsc
 			throw new Error("Git extension not found");
 		}
 
-		const git = gitExtension.getAPI(1);
+		const git = gitExtension.getAPI(1) as GitApiLike;
 		if (git.repositories.length === 0) {
 			throw new Error("No Git repositories available");
 		}
 
 		// If scm is provided, then the user specified one repository by clicking the "Source Control" menu button
 		if (scm) {
+			if (!scm.rootUri) {
+				throw new Error("Repository not found for provided SCM");
+			}
 			const repository = git.getRepository(scm.rootUri);
 
 			if (!repository) {
@@ -52,7 +81,7 @@ export async function generateCommitMsg(secrets: vscode.SecretStorage, scm?: vsc
 	}
 }
 
-async function orchestrateWorkspaceCommitMsgGeneration(secrets: vscode.SecretStorage, repos: any[]) {
+async function orchestrateWorkspaceCommitMsgGeneration(secrets: vscode.SecretStorage, repos: GitRepositoryLike[]) {
 	const reposWithChanges = await filterForReposWithChanges(repos);
 
 	if (reposWithChanges.length === 0) {
@@ -89,8 +118,8 @@ async function orchestrateWorkspaceCommitMsgGeneration(secrets: vscode.SecretSto
 	}
 }
 
-async function filterForReposWithChanges(repos: any[]) {
-	const reposWithChanges = [];
+async function filterForReposWithChanges(repos: GitRepositoryLike[]): Promise<GitRepositoryLike[]> {
+	const reposWithChanges: GitRepositoryLike[] = [];
 
 	// Check which repositories have changes
 	for (const repo of repos) {
@@ -99,16 +128,16 @@ async function filterForReposWithChanges(repos: any[]) {
 			if (gitDiff) {
 				reposWithChanges.push(repo);
 			}
-		} catch (error) {
+		} catch {
 			// Skip repositories with errors (no changes, etc.)
 		}
 	}
 	return reposWithChanges;
 }
 
-async function promptRepoSelection(repos: any[]) {
+async function promptRepoSelection(repos: GitRepositoryLike[]): Promise<RepositoryQuickPickItem | undefined> {
 	// Multiple repos with changes - ask user to choose
-	const repoItems = repos.map((repo) => ({
+	const repoItems: RepositoryQuickPickItem[] = repos.map((repo) => ({
 		label: repo.rootUri.fsPath.split(path.sep).pop() || repo.rootUri.fsPath,
 		description: repo.rootUri.fsPath,
 		repo: repo,
@@ -117,7 +146,7 @@ async function promptRepoSelection(repos: any[]) {
 	repoItems.unshift({
 		label: "$(git-commit) Generate for all repositories with changes",
 		description: `Generate commit messages for ${repos.length} repositories`,
-		repo: null as any,
+		repo: null,
 	});
 
 	return await vscode.window.showQuickPick(repoItems, {
@@ -125,7 +154,7 @@ async function promptRepoSelection(repos: any[]) {
 	});
 }
 
-async function generateCommitMsgForRepository(secrets: vscode.SecretStorage, repository: any) {
+async function generateCommitMsgForRepository(secrets: vscode.SecretStorage, repository: GitRepositoryLike) {
 	const inputBox = repository.inputBox;
 	const repoPath = repository.rootUri.fsPath;
 	const gitDiff = await getGitDiff(repoPath);
@@ -144,15 +173,19 @@ async function generateCommitMsgForRepository(secrets: vscode.SecretStorage, rep
 	);
 }
 
-async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff: string, inputBox: any) {
+async function performCommitMsgGeneration(
+	secrets: vscode.SecretStorage,
+	gitDiff: string,
+	inputBox: GitRepositoryLike["inputBox"]
+) {
 	const startTime = Date.now();
 	let modelId: string | undefined;
 	try {
-		vscode.commands.executeCommand("setContext", "oaicopilot-kong.isGeneratingCommit", true);
+		vscode.commands.executeCommand("setContext", "kong-chat-bridge.isGeneratingCommit", true);
 		const config = vscode.workspace.getConfiguration();
 
 		// Get custom prompts or use defaults
-		const customSystemPrompt = config.get<string>("oaicopilot-kong.commitMessagePrompt", "");
+		const customSystemPrompt = config.get<string>("kong-chat-bridge.commitMessagePrompt", "");
 		const PROMPT = {
 			system: customSystemPrompt || DEFAULT_PROMPT.system,
 			user: DEFAULT_PROMPT.user,
@@ -171,7 +204,7 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
 		const prompt = prompts.join("\n\n");
 
 		// Get user models from configuration
-		const userModels = normalizeUserModels(config.get<unknown>("oaicopilot-kong.models", []));
+		const userModels = normalizeUserModels(config.get<unknown>("kong-chat-bridge.models", []));
 
 		// Filter models that are marked for commit generation
 		const commitModels = userModels.filter((model: HFModelItem) => model.useForCommitGeneration === true);
@@ -190,17 +223,17 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
 		// Get API key for the model's provider
 		const apiKey = await ensureApiKey(secrets, selectedModel.owned_by);
 		if (!apiKey) {
-			throw new Error("OAI Compatible API key not found");
+			throw new Error("Kong Bridge API key not found");
 		}
 
 		// Get base URL for the model
-		const baseUrl = selectedModel.baseUrl || config.get<string>("oaicopilot-kong.baseUrl", "");
+		const baseUrl = selectedModel.baseUrl || config.get<string>("kong-chat-bridge.baseUrl", "");
 		if (!baseUrl || !baseUrl.startsWith("http")) {
 			throw new Error(`Invalid base URL configuration.`);
 		}
 
 		// Get commit language configuration
-		const commitLanguage = config.get<string>("oaicopilot-kong.commitLanguage", "English");
+		const commitLanguage = config.get<string>("kong-chat-bridge.commitLanguage", "English");
 
 		// Create a system prompt with language instruction
 		const systemPrompt = PROMPT.system + ` Generate commit message in ${commitLanguage}.`;
@@ -209,7 +242,7 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
 		const messages = [{ role: "user", content: prompt }];
 
 		// Create API instance based on model's API mode
-		let apiInstance;
+		let apiInstance: CommitMessageApi;
 		const apiMode = selectedModel.apiMode ?? "openai";
 
 		if (apiMode === "anthropic") {
@@ -250,13 +283,13 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
 		logger.error("commit.error", { modelId: modelId ?? "unknown", error: errorMessage });
 		vscode.window.showErrorMessage(`Failed to generate commit message: ${errorMessage}`);
 	} finally {
-		vscode.commands.executeCommand("setContext", "oaicopilot-kong.isGeneratingCommit", false);
+		vscode.commands.executeCommand("setContext", "kong-chat-bridge.isGeneratingCommit", false);
 	}
 }
 
 export function abortCommitGeneration() {
 	commitGenerationAbortController?.abort();
-	vscode.commands.executeCommand("setContext", "oaicopilot-kong.isGeneratingCommit", false);
+	vscode.commands.executeCommand("setContext", "kong-chat-bridge.isGeneratingCommit", false);
 }
 
 /**
@@ -285,13 +318,13 @@ async function ensureApiKey(secrets: vscode.SecretStorage, provider: string): Pr
 	let apiKey: string | undefined;
 	if (provider && provider.trim() !== "") {
 		const normalizedProvider = provider.trim().toLowerCase();
-		const providerKey = `oaicopilot-kong.apiKey.${normalizedProvider}`;
+		const providerKey = `kong-chat-bridge.apiKey.${normalizedProvider}`;
 		apiKey = await secrets.get(providerKey);
 	}
 
 	// Fall back to generic API key
 	if (!apiKey) {
-		apiKey = await secrets.get("oaicopilot-kong.apiKey");
+		apiKey = await secrets.get("kong-chat-bridge.apiKey");
 	}
 
 	return apiKey;
