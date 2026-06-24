@@ -4,7 +4,7 @@
 		<meta charset="UTF-8" />
 		<meta http-equiv="Content-Security-Policy" content="%CSP_SOURCE%" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>OAI Copilot Configuration</title>
+		<title>Kong Bridge Configuration</title>
 		<link rel="stylesheet" href="%CSS_URI%" />
 	</head>
 	<body>
@@ -95,6 +95,21 @@
 							<option value="Portuguese (Brazil)">Portuguese (Brazil)</option>
 							<option value="Turkish">Turkish</option>
 							<option value="Polish">Polish</option>
+						</select>
+					</div>
+				</div>
+			</div>
+			<div class="retry-config">
+				<h3>Copilot Compatibility</h3>
+				<div class="row">
+					<div class="field">
+						<label for="copilotUtilitySmallFallbackModel">Utility-small Fallback</label>
+						<div class="field-description">
+							Disabled by default. When enabled, this exposes a hidden gpt-4o-mini alias backed by the selected
+							model; use only for Copilot Agent network failures because it may affect reasoning UI.
+						</div>
+						<select id="copilotUtilitySmallFallbackModel" class="model-input">
+							<option value="">Disabled</option>
 						</select>
 					</div>
 				</div>
@@ -192,6 +207,7 @@
 							<select id="modelApiMode" class="model-input">
 								<option value="openai">OpenAI</option>
 								<option value="openai-responses">OpenAI Responses</option>
+								<option value="openai-responses-ws">OpenAI Responses (WebSocket)</option>
 								<option value="ollama">Ollama</option>
 								<option value="anthropic">Anthropic</option>
 								<option value="gemini">Gemini</option>
@@ -278,7 +294,7 @@
 								<div class="field">
 									<label for="modelDisplayName">Display Name</label>
 									<div class="field-description">
-										Display name for the model that will be shown in the Copilot interface.
+										Display name for the model that will be shown in the host interface.
 									</div>
 									<input id="modelDisplayName" type="text" class="model-input" placeholder="e.g., GPT-4 Turbo" />
 								</div>
@@ -355,7 +371,7 @@
 								<div class="field">
 									<label for="modelReasoningEffort">Reasoning Effort (OpenAI)</label>
 									<div class="field-description">
-										Default OpenAI reasoning effort. Leave empty to hide the Copilot picker.
+										Default OpenAI reasoning effort. Leave empty to hide the host picker.
 									</div>
 									<select id="modelReasoningEffort" class="model-input">
 										<option value=""></option>

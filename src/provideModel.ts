@@ -15,7 +15,98 @@ import { logger } from "./logger";
 
 const DEFAULT_CONTEXT_LENGTH = 128000;
 const DEFAULT_MAX_TOKENS = 4096;
-const EXTENSION_LABEL = "OAICopilot";
+const DEFAULT_MODEL_FAMILY = "oai-compatible";
+const EXTENSION_LABEL = "Kong-chat-bridge";
+const COPILOT_UTILITY_SMALL_FAMILY = "gpt-4o-mini";
+const COPILOT_UTILITY_SMALL_ALIAS_SUFFIX = "::__copilot_utility_gpt4o_mini";
+
+type SelectableModelPickerChatInformation = ModelPickerChatInformation & {
+	readonly isUserSelectable?: boolean;
+};
+
+function lastModelSegment(modelId: string): string {
+	const normalized = modelId.trim().toLowerCase();
+	const parts = normalized.split(/[/:]/).filter(Boolean);
+	return parts.length > 0 ? parts[parts.length - 1] : normalized;
+}
+
+function inferHostModelFamily(modelId: string): string | undefined {
+	const candidate = lastModelSegment(modelId);
+	if (!candidate) {
+		return undefined;
+	}
+	if (/^gpt(?:$|[-_])/.test(candidate) || /^gpt-5\.\d+/.test(candidate)) {
+		return candidate;
+	}
+	if (/^o[34](?:$|-)/.test(candidate)) {
+		return candidate;
+	}
+	if (candidate === "claude" || candidate.startsWith("claude-")) {
+		return candidate;
+	}
+	if (candidate === "gemini" || candidate.startsWith("gemini-")) {
+		return candidate;
+	}
+	if (candidate === "grok-code" || candidate.startsWith("grok-")) {
+		return candidate;
+	}
+	return undefined;
+}
+
+export function resolveModelFamily(model: Pick<HFModelItem, "family" | "id">): string {
+	const configured = model.family?.trim();
+	return configured || inferHostModelFamily(model.id) || DEFAULT_MODEL_FAMILY;
+}
+
+function createCopilotUtilityAliasId(modelId: string): string {
+	return `${modelId}${COPILOT_UTILITY_SMALL_ALIAS_SUFFIX}`;
+}
+
+export function sourceModelIdForCopilotUtilityAlias(modelId: string): string {
+	return modelId.endsWith(COPILOT_UTILITY_SMALL_ALIAS_SUFFIX)
+		? modelId.slice(0, -COPILOT_UTILITY_SMALL_ALIAS_SUFFIX.length)
+		: modelId;
+}
+
+function addCopilotUtilitySmallAlias(
+	infos: ModelPickerChatInformation[],
+	fallbackModelId: string
+): ModelPickerChatInformation[] {
+	const normalizedFallbackModelId = fallbackModelId.trim();
+	if (!normalizedFallbackModelId) {
+		return infos;
+	}
+	if (infos.some((info) => info.family?.trim().toLowerCase() === COPILOT_UTILITY_SMALL_FAMILY)) {
+		return infos;
+	}
+
+	const target = infos.find(
+		(info) =>
+			info.id === normalizedFallbackModelId ||
+			info.id.startsWith(`${normalizedFallbackModelId}::`) ||
+			info.id.startsWith(`${normalizedFallbackModelId}:`)
+	);
+	if (!target) {
+		logger.warn("models.utilityFallback.notFound", { fallbackModelId: normalizedFallbackModelId });
+		return infos;
+	}
+
+	const aliasId = createCopilotUtilityAliasId(target.id);
+	if (infos.some((info) => info.id === aliasId)) {
+		return infos;
+	}
+
+	const alias: SelectableModelPickerChatInformation = {
+		...target,
+		id: aliasId,
+		family: COPILOT_UTILITY_SMALL_FAMILY,
+		detail: `${target.detail} (${COPILOT_UTILITY_SMALL_FAMILY} compatibility)`,
+		tooltip: `${target.tooltip ?? target.detail} (${COPILOT_UTILITY_SMALL_FAMILY} compatibility)`,
+		isUserSelectable: false,
+	};
+
+	return [...infos, alias];
+}
 
 /**
  * Get the list of available language models contributed by this provider
@@ -30,7 +121,7 @@ export async function prepareLanguageModelChatInformation(
 ): Promise<LanguageModelChatInformation[]> {
 	// Check for user-configured models first
 	const config = vscode.workspace.getConfiguration();
-	const userModels = normalizeUserModels(config.get<unknown>("oaicopilot.models", []));
+	const userModels = normalizeUserModels(config.get<unknown>("kong-chat-bridge.models", []));
 
 	let infos: ModelPickerChatInformation[];
 	if (userModels && userModels.length > 0) {
@@ -47,17 +138,17 @@ export async function prepareLanguageModelChatInformation(
 				const modelName = m.displayName || (m.configId ? `${m.id}::${m.configId}` : `${m.id}`);
 				const detail = m.owned_by ? `${m.owned_by} (${EXTENSION_LABEL})` : EXTENSION_LABEL;
 				const reasoningEffort = isReasoningEffortValue(m.reasoning_effort) ? m.reasoning_effort : undefined;
+				const family = resolveModelFamily(m);
 
 				return {
 					id: modelId,
 					name: modelName,
 					detail: detail,
 					tooltip: detail,
-					family: m.family ?? EXTENSION_LABEL,
+					family,
 					version: "1.0.0",
 					maxInputTokens: maxInput,
 					maxOutputTokens: maxOutput,
-					isUserSelectable: true,
 					...(reasoningEffort
 						? { configurationSchema: createReasoningEffortConfigurationSchema(reasoningEffort) }
 						: {}),
@@ -74,12 +165,12 @@ export async function prepareLanguageModelChatInformation(
 			if (options.silent) {
 				return [];
 			} else {
-				throw new Error("OAI Compatible API key not found");
+				throw new Error("Kong Bridge API key not found");
 			}
 		}
 
 		const config = vscode.workspace.getConfiguration();
-		const BASE_URL = config.get<string>("oaicopilot.baseUrl", "");
+		const BASE_URL = config.get<string>("kong-chat-bridge.baseUrl", "");
 		if (!BASE_URL || !BASE_URL.startsWith("http")) {
 			throw new Error(`Invalid base URL configuration.`);
 		}
@@ -104,11 +195,10 @@ export async function prepareLanguageModelChatInformation(
 					name: `${m.id}`,
 					detail: detail,
 					tooltip: detail,
-					family: m.family ?? EXTENSION_LABEL,
+					family: resolveModelFamily(m),
 					version: "1.0.0",
 					maxInputTokens: maxInput,
 					maxOutputTokens: maxOutput,
-					isUserSelectable: true,
 					capabilities: {
 						toolCalling: true,
 						imageInput: vision,
@@ -126,11 +216,10 @@ export async function prepareLanguageModelChatInformation(
 					name: `${m.id}`,
 					detail: EXTENSION_LABEL,
 					tooltip: EXTENSION_LABEL,
-					family: m.family ?? EXTENSION_LABEL,
+					family: resolveModelFamily(m),
 					version: "1.0.0",
 					maxInputTokens: maxInput,
 					maxOutputTokens: maxOutput,
-					isUserSelectable: true,
 					capabilities: {
 						toolCalling: true,
 						imageInput: true,
@@ -142,6 +231,8 @@ export async function prepareLanguageModelChatInformation(
 		});
 	}
 
+	const utilityFallbackModel = config.get<string>("kong-chat-bridge.copilotUtilitySmallFallbackModel", "");
+	infos = addCopilotUtilitySmallAlias(infos, utilityFallbackModel);
 	logger.info("models.loaded", { count: infos.length, source: userModels && userModels.length > 0 ? "config" : "api" });
 	return infos;
 }
@@ -179,12 +270,12 @@ export async function fetchModels(
 			try {
 				text = await resp.text();
 			} catch (error) {
-				console.error("[OAI Compatible Model Provider] Failed to read response text", error);
+				console.error("[Kong Bridge Model Provider] Failed to read response text", error);
 			}
 			const err = new Error(
-				`Failed to fetch OAI Compatible models: ${resp.status} ${resp.statusText}${text ? `\n${text}` : ""}`
+				`Failed to fetch Kong Bridge models: ${resp.status} ${resp.statusText}${text ? `\n${text}` : ""}`
 			);
-			console.error("[OAI Compatible Model Provider] Failed to fetch OAI Compatible models", err);
+			console.error("[Kong Bridge Model Provider] Failed to fetch Kong Bridge models", err);
 			throw err;
 		}
 		const parsed = (await resp.json()) as HFModelsResponse;
@@ -196,7 +287,7 @@ export async function fetchModels(
 		return { models };
 	} catch (err) {
 		const errorObj = err instanceof Error ? err : new Error(String(err));
-		console.error("[OAI Compatible Model Provider] Failed to fetch OAI Compatible models", err);
+		console.error("[Kong Bridge Model Provider] Failed to fetch Kong Bridge models", err);
 		logger.error("models.fetch.error", { baseUrl, error: errorObj.message });
 		throw err;
 	}
@@ -209,18 +300,18 @@ export async function fetchModels(
  */
 async function ensureApiKey(silent: boolean, secrets: vscode.SecretStorage): Promise<string | undefined> {
 	// Fall back to generic API key
-	let apiKey = await secrets.get("oaicopilot.apiKey");
+	let apiKey = await secrets.get("kong-chat-bridge.apiKey");
 
 	if (!apiKey && !silent) {
 		const entered = await vscode.window.showInputBox({
-			title: "OAI Compatible API Key",
-			prompt: "Enter your OAI Compatible API key",
+			title: "Kong Bridge API Key",
+			prompt: "Enter your Kong Bridge API key",
 			ignoreFocusOut: true,
 			password: true,
 		});
 		if (entered && entered.trim()) {
 			apiKey = entered.trim();
-			await secrets.store("oaicopilot.apiKey", apiKey);
+			await secrets.store("kong-chat-bridge.apiKey", apiKey);
 		}
 	}
 	return apiKey;

@@ -3,7 +3,6 @@ import {
 	CancellationToken,
 	LanguageModelChatRequestMessage,
 	ProvideLanguageModelChatResponseOptions,
-	LanguageModelResponsePart2,
 	Progress,
 } from "vscode";
 
@@ -22,6 +21,29 @@ import {
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
+import {
+	getLanguageModelThinkingText,
+	isLanguageModelThinkingPart,
+	type LanguageModelProgressPart,
+} from "../vscodeLanguageModelCompat";
+
+export type OpenAIResponsesTransport = "http" | "websocket";
+
+const RESPONSES_UNSUPPORTED_ON_BOTH = new Set(["presence_penalty", "frequency_penalty"]);
+const RESPONSES_REDUNDANT_ON_HTTP = new Set([
+	"temperature",
+	"top_p",
+	"max_output_tokens",
+	"prompt_cache_retention",
+	"safety_identifier",
+]);
+const RESPONSES_UNSUPPORTED_ON_WS = new Set([
+	"temperature",
+	"top_p",
+	"max_output_tokens",
+	"prompt_cache_retention",
+	"safety_identifier",
+]);
 
 export interface ResponsesInputMessage {
 	role: "user" | "assistant" | "system";
@@ -111,8 +133,8 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 					const callId = (part as { callId?: string }).callId ?? "";
 					const content = collectToolResultText(part as { content?: ReadonlyArray<unknown> });
 					toolResults.push({ callId, content });
-				} else if (part instanceof vscode.LanguageModelThinkingPart && modelConfig.includeReasoningInRequest) {
-					const content = Array.isArray(part.value) ? part.value.join("") : part.value;
+				} else if (isLanguageModelThinkingPart(part) && modelConfig.includeReasoningInRequest) {
+					const content = getLanguageModelThinkingText(part);
 					thinkingParts.push(content);
 				}
 			}
@@ -296,9 +318,34 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 		return rb;
 	}
 
+	sanitizeRequestBody(
+		requestBody: Record<string, unknown>,
+		transport: OpenAIResponsesTransport
+	): Record<string, unknown> {
+		const sanitized = { ...requestBody };
+		const keysToDelete = new Set<string>(RESPONSES_UNSUPPORTED_ON_BOTH);
+
+		if (transport === "http") {
+			for (const key of RESPONSES_REDUNDANT_ON_HTTP) {
+				keysToDelete.add(key);
+			}
+		} else {
+			for (const key of RESPONSES_UNSUPPORTED_ON_WS) {
+				keysToDelete.add(key);
+			}
+		}
+
+		for (const key of keysToDelete) {
+			delete sanitized[key];
+		}
+
+		sanitized.store = false;
+		return sanitized;
+	}
+
 	async processStreamingResponse(
 		responseBody: ReadableStream<Uint8Array>,
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelProgressPart>,
 		token: CancellationToken
 	): Promise<void> {
 		this._responseId = null;
@@ -399,7 +446,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 		);
 	}
 
-	private processOutputTextChunk(text: string, progress: Progress<LanguageModelResponsePart2>): void {
+	private processOutputTextChunk(text: string, progress: Progress<LanguageModelProgressPart>): void {
 		if (!text) {
 			return;
 		}
@@ -420,7 +467,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 
 	private async processEvent(
 		event: Record<string, unknown>,
-		progress: Progress<LanguageModelResponsePart2>
+		progress: Progress<LanguageModelProgressPart>
 	): Promise<void> {
 		const eventType = typeof event.type === "string" ? event.type : "";
 		if (!eventType) {
@@ -432,7 +479,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 		switch (eventType) {
 			case "error": {
 				const errorText = JSON.stringify(event);
-				console.error("[OAI Compatible Model Provider] Responses API streaming process error:", errorText);
+				console.error("[Kong Bridge Model Provider] Responses API streaming process error:", errorText);
 				return;
 			}
 
@@ -649,7 +696,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 
 	private processReasoningText(
 		event: Record<string, unknown>,
-		progress: vscode.Progress<vscode.LanguageModelResponsePart2>
+		progress: vscode.Progress<LanguageModelProgressPart>
 	) {
 		const candidates = [
 			this.coerceText(event.delta),
@@ -714,6 +761,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 		};
 
 		requestBody = this.prepareRequestBody(requestBody, model, undefined);
+		requestBody = this.sanitizeRequestBody(requestBody, "http");
 
 		const headers = CommonApi.prepareHeaders(apiKey, model.apiMode ?? "openai-responses", model.headers);
 

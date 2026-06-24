@@ -3,6 +3,7 @@ import { LanguageModelChatRequestMessage, LanguageModelChatTool } from "vscode";
 import { tokenizerManager } from "./tokenizer/tokenizerManager";
 import { getImageDimensions } from "./tokenizer/imageUtils";
 import { createDataUrl } from "./utils";
+import { getLanguageModelThinkingText, isLanguageModelThinkingPart } from "./vscodeLanguageModelCompat";
 
 /*
  * Each message comes with 3 tokens per message due to special characters
@@ -44,10 +45,10 @@ export async function countMessageTokens(
 			} else if (part instanceof vscode.LanguageModelToolResultPart) {
 				// Tool result token calculation
 				totalTokens += await textTokenLength(JSON.stringify(part.content));
-			} else if (part instanceof vscode.LanguageModelThinkingPart) {
+			} else if (isLanguageModelThinkingPart(part)) {
 				// Thinking Token
 				if (modelConfig.includeReasoningInRequest) {
-					const thinkingText = Array.isArray(part.value) ? part.value.join("") : part.value;
+					const thinkingText = getLanguageModelThinkingText(part);
 					totalTokens += await textTokenLength(thinkingText);
 				}
 			} else {
@@ -61,7 +62,7 @@ export async function countMessageTokens(
 export async function textTokenLength(text: string): Promise<number> {
 	try {
 		return tokenizerManager.countTokens(text);
-	} catch (e) {
+	} catch {
 		return 0;
 	}
 }

@@ -16,7 +16,7 @@ async function checkGitRepo(cwd: string): Promise<boolean> {
 	try {
 		await execAsync("git rev-parse --git-dir", { cwd });
 		return true;
-	} catch (_error) {
+	} catch {
 		return false;
 	}
 }
@@ -25,7 +25,7 @@ async function checkGitInstalled(): Promise<boolean> {
 	try {
 		await execAsync("git --version");
 		return true;
-	} catch (_error) {
+	} catch {
 		return false;
 	}
 }
@@ -34,7 +34,7 @@ async function checkGitRepoHasCommits(cwd: string): Promise<boolean> {
 	try {
 		await execAsync("git rev-parse HEAD", { cwd });
 		return true;
-	} catch (_error) {
+	} catch {
 		return false;
 	}
 }
@@ -186,39 +186,35 @@ export async function getWorkingState(cwd: string): Promise<string> {
 }
 
 export async function getGitDiff(cwd: string, stagedOnly = false): Promise<string> {
-	try {
-		const isInstalled = await checkGitInstalled();
-		if (!isInstalled) {
-			throw new Error("Git is not installed");
-		}
-
-		const isRepo = await checkGitRepo(cwd);
-		if (!isRepo) {
-			throw new Error("Not a git repository");
-		}
-
-		let diff = "";
-		let command = "git --no-pager diff --staged --diff-filter=d";
-		if (await checkGitRepoHasCommits(cwd)) {
-			// Only run git diff if there are commits
-			const { stdout: staged } = await execAsync(command, { cwd });
-			diff = staged.trim();
-		}
-
-		if (!stagedOnly && !diff) {
-			command = "git --no-pager diff HEAD --diff-filter=d";
-			const { stdout: unstaged } = await execAsync(command, { cwd });
-			diff = unstaged.trim();
-		}
-
-		if (!diff) {
-			throw new Error("No changes in workspace for commit message");
-		}
-
-		return truncateOutput(`'${command}' Output:\n\n${diff}`.trim());
-	} catch (error) {
-		throw error;
+	const isInstalled = await checkGitInstalled();
+	if (!isInstalled) {
+		throw new Error("Git is not installed");
 	}
+
+	const isRepo = await checkGitRepo(cwd);
+	if (!isRepo) {
+		throw new Error("Not a git repository");
+	}
+
+	let diff = "";
+	let command = "git --no-pager diff --staged --diff-filter=d";
+	if (await checkGitRepoHasCommits(cwd)) {
+		// Only run git diff if there are commits
+		const { stdout: staged } = await execAsync(command, { cwd });
+		diff = staged.trim();
+	}
+
+	if (!stagedOnly && !diff) {
+		command = "git --no-pager diff HEAD --diff-filter=d";
+		const { stdout: unstaged } = await execAsync(command, { cwd });
+		diff = unstaged.trim();
+	}
+
+	if (!diff) {
+		throw new Error("No changes in workspace for commit message");
+	}
+
+	return truncateOutput(`'${command}' Output:\n\n${diff}`.trim());
 }
 
 export async function getGitRemoteUrls(cwd: string): Promise<string[]> {

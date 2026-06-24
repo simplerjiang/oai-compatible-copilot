@@ -12,7 +12,11 @@ import {
 import { OllamaApi } from "../ollama/ollamaApi";
 import { OpenaiApi } from "../openai/openaiApi";
 import { OpenaiResponsesApi } from "../openai/openaiResponsesApi";
-import { prepareLanguageModelChatInformation } from "../provideModel";
+import {
+	prepareLanguageModelChatInformation,
+	resolveModelFamily,
+	sourceModelIdForCopilotUtilityAlias,
+} from "../provideModel";
 import type { HFModelItem } from "../types";
 
 suite("modelConfiguration", () => {
@@ -56,32 +60,113 @@ suite("modelConfiguration", () => {
 		);
 	});
 
+	test("infers GPT family from gpt-5.5 model ids", () => {
+		assert.strictEqual(resolveModelFamily({ id: "gpt-5.5" }), "gpt-5.5");
+		assert.strictEqual(resolveModelFamily({ id: "openai/gpt-5-codex" }), "gpt-5-codex");
+	});
+
+	test("keeps configured family and falls back to the documented default", () => {
+		assert.strictEqual(resolveModelFamily({ id: "gpt-5.5", family: "gpt-5" }), "gpt-5");
+		assert.strictEqual(resolveModelFamily({ id: "deepseek-v4-pro" }), "oai-compatible");
+	});
+
+	test("does not add a gpt-4o-mini utility alias by default", async () => {
+		const config = vscode.workspace.getConfiguration();
+		const previousModels = config.get<unknown>("kong-chat-bridge.models", []);
+		const cts = new vscode.CancellationTokenSource();
+		const model: HFModelItem = {
+			id: "gpt-5.5",
+			displayName: "gpt-5.5",
+			owned_by: "openai",
+			apiMode: "openai-responses-ws",
+			context_length: 272_000,
+			max_tokens: 4096,
+		};
+
+		try {
+			await config.update("kong-chat-bridge.models", [model], vscode.ConfigurationTarget.Global);
+
+			const infos = await prepareLanguageModelChatInformation({ silent: true }, cts.token, {} as vscode.SecretStorage);
+			const baseInfo = infos.find((item) => item.id === "gpt-5.5") as ModelPickerChatInformation | undefined;
+			const aliasInfo = infos.find((item) => item.family === "gpt-4o-mini") as ModelPickerChatInformation | undefined;
+
+			assert.ok(baseInfo, "base model should be registered");
+			assert.strictEqual(baseInfo.family, "gpt-5.5");
+			assert.strictEqual(aliasInfo, undefined);
+		} finally {
+			cts.dispose();
+			await config.update("kong-chat-bridge.models", previousModels, vscode.ConfigurationTarget.Global);
+		}
+	});
+
+	test("adds an explicit hidden gpt-4o-mini utility fallback alias", async () => {
+		const config = vscode.workspace.getConfiguration();
+		const previousModels = config.get<unknown>("kong-chat-bridge.models", []);
+		const previousFallback = config.get<string>("kong-chat-bridge.copilotUtilitySmallFallbackModel", "");
+		const cts = new vscode.CancellationTokenSource();
+		const model: HFModelItem = {
+			id: "gpt-5.5",
+			displayName: "gpt-5.5",
+			owned_by: "openai",
+			apiMode: "openai-responses-ws",
+			context_length: 272_000,
+			max_tokens: 4096,
+		};
+
+		try {
+			await config.update("kong-chat-bridge.models", [model], vscode.ConfigurationTarget.Global);
+			await config.update(
+				"kong-chat-bridge.copilotUtilitySmallFallbackModel",
+				"gpt-5.5",
+				vscode.ConfigurationTarget.Global
+			);
+
+			const infos = await prepareLanguageModelChatInformation({ silent: true }, cts.token, {} as vscode.SecretStorage);
+			const baseInfo = infos.find((item) => item.id === "gpt-5.5") as ModelPickerChatInformation | undefined;
+			const aliasInfo = infos.find((item) => item.family === "gpt-4o-mini") as ModelPickerChatInformation | undefined;
+
+			assert.ok(baseInfo, "base model should be registered");
+			assert.ok(aliasInfo, "gpt-4o-mini compatibility alias should be registered");
+			assert.strictEqual((aliasInfo as ModelPickerChatInformation & { isUserSelectable?: boolean }).isUserSelectable, false);
+			assert.strictEqual(sourceModelIdForCopilotUtilityAlias(aliasInfo.id), "gpt-5.5");
+			assert.strictEqual(aliasInfo.maxInputTokens, baseInfo.maxInputTokens);
+			assert.strictEqual(aliasInfo.maxOutputTokens, baseInfo.maxOutputTokens);
+		} finally {
+			cts.dispose();
+			await config.update("kong-chat-bridge.models", previousModels, vscode.ConfigurationTarget.Global);
+			await config.update(
+				"kong-chat-bridge.copilotUtilitySmallFallbackModel",
+				previousFallback,
+				vscode.ConfigurationTarget.Global
+			);
+		}
+	});
+
 	test("registers deepseek-v4-flash with reasoning effort metadata", async () => {
 		const config = vscode.workspace.getConfiguration();
-		const previousModels = config.get<unknown>("oaicopilot.models", []);
+		const previousModels = config.get<unknown>("kong-chat-bridge.models", []);
 		const cts = new vscode.CancellationTokenSource();
 		const model: HFModelItem = { ...deepSeekModel, id: "deepseek-v4-flash", displayName: undefined };
 
 		try {
-			await config.update("oaicopilot.models", [model], vscode.ConfigurationTarget.Global);
+			await config.update("kong-chat-bridge.models", [model], vscode.ConfigurationTarget.Global);
 
 			const infos = await prepareLanguageModelChatInformation({ silent: true }, cts.token, {} as vscode.SecretStorage);
 			const info = infos.find((item) => item.id === "deepseek-v4-flash") as ModelPickerChatInformation | undefined;
 
 			assert.ok(info, "deepseek-v4-flash should be registered");
 			assert.strictEqual(info.name, "deepseek-v4-flash");
-			assert.strictEqual(info.detail, "deepseek (OAICopilot)");
-			assert.strictEqual(info.isUserSelectable, true);
+			assert.strictEqual(info.detail, "deepseek (Kong-chat-bridge)");
 			assert.deepStrictEqual(info.configurationSchema, createReasoningEffortConfigurationSchema("medium"));
 		} finally {
 			cts.dispose();
-			await config.update("oaicopilot.models", previousModels, vscode.ConfigurationTarget.Global);
+			await config.update("kong-chat-bridge.models", previousModels, vscode.ConfigurationTarget.Global);
 		}
 	});
 
 	test("does not register reasoning effort metadata when the default is empty", async () => {
 		const config = vscode.workspace.getConfiguration();
-		const previousModels = config.get<unknown>("oaicopilot.models", []);
+		const previousModels = config.get<unknown>("kong-chat-bridge.models", []);
 		const cts = new vscode.CancellationTokenSource();
 		const model: HFModelItem = {
 			...deepSeekModel,
@@ -91,7 +176,7 @@ suite("modelConfiguration", () => {
 		};
 
 		try {
-			await config.update("oaicopilot.models", [model], vscode.ConfigurationTarget.Global);
+			await config.update("kong-chat-bridge.models", [model], vscode.ConfigurationTarget.Global);
 
 			const infos = await prepareLanguageModelChatInformation({ silent: true }, cts.token, {} as vscode.SecretStorage);
 			const info = infos.find((item) => item.id === "deepseek-v4-flash") as ModelPickerChatInformation | undefined;
@@ -100,7 +185,7 @@ suite("modelConfiguration", () => {
 			assert.strictEqual(info.configurationSchema, undefined);
 		} finally {
 			cts.dispose();
-			await config.update("oaicopilot.models", previousModels, vscode.ConfigurationTarget.Global);
+			await config.update("kong-chat-bridge.models", previousModels, vscode.ConfigurationTarget.Global);
 		}
 	});
 
@@ -114,7 +199,7 @@ suite("modelConfiguration", () => {
 		assert.strictEqual(requestBody.reasoning_effort, "high");
 	});
 
-	test("falls back to the configured default reasoning effort when Copilot has no temporary override", () => {
+	test("falls back to the configured default reasoning effort when the host has no temporary override", () => {
 		const requestBody = new OpenaiApi("deepseek-v4-pro").prepareRequestBody(
 			{ model: "deepseek-v4-pro", messages: [], stream: true },
 			{ ...deepSeekModel, reasoning_effort: "low" },

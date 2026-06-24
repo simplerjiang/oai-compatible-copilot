@@ -126,7 +126,7 @@ export function convertToolsToOpenAI(options?: vscode.ProvideLanguageModelChatRe
 	let tool_choice: "auto" | { type: "function"; function: { name: string } } = "auto";
 	if (options?.toolMode === vscode.LanguageModelChatToolMode.Required) {
 		if (tools.length !== 1) {
-			console.error("[OAI Compatible Model Provider] ToolMode.Required but multiple tools:", tools.length);
+			console.error("[Kong Bridge Model Provider] ToolMode.Required but multiple tools:", tools.length);
 			throw new Error("LanguageModelChatToolMode.Required is not supported with more than one tool");
 		}
 		tool_choice = { type: "function", function: { name: tools[0].name } };
@@ -260,7 +260,7 @@ export function tryParseJSONObject(text: string): { ok: true; value: Record<stri
  */
 export function createRetryConfig(): RetryConfig {
 	const config = vscode.workspace.getConfiguration();
-	const retryConfig = config.get<RetryConfig>("oaicopilot.retry", {
+	const retryConfig = config.get<RetryConfig>("kong-chat-bridge.retry", {
 		enabled: true,
 		max_attempts: RETRY_MAX_ATTEMPTS,
 		interval_ms: RETRY_INTERVAL_MS,
@@ -322,7 +322,7 @@ export async function executeWithRetry<T>(fn: () => Promise<T>, retryConfig: Ret
 			});
 
 			console.error(
-				`[OAI Compatible Model Provider] Retryable error detected, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxAttempts}). Error:`,
+				`[Kong Bridge Model Provider] Retryable error detected, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxAttempts}). Error:`,
 				lastError instanceof Error ? { name: lastError.name, message: lastError.message } : String(lastError)
 			);
 

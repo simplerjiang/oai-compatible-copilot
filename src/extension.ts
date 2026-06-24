@@ -18,15 +18,15 @@ export function activate(context: vscode.ExtensionContext) {
 	const tokenCountStatusBarItem: vscode.StatusBarItem = initStatusBar(context);
 	const provider = new HuggingFaceChatModelProvider(context.secrets, tokenCountStatusBarItem);
 	// Register the Hugging Face provider under the vendor id used in package.json
-	vscode.lm.registerLanguageModelChatProvider("oaicopilot", provider);
+	vscode.lm.registerLanguageModelChatProvider("kong-chat-bridge", provider);
 
 	// Management command to configure API key
 	context.subscriptions.push(
-		vscode.commands.registerCommand("oaicopilot.setApikey", async () => {
-			const existing = await context.secrets.get("oaicopilot.apiKey");
+		vscode.commands.registerCommand("kong-chat-bridge.setApikey", async () => {
+			const existing = await context.secrets.get("kong-chat-bridge.apiKey");
 			const apiKey = await vscode.window.showInputBox({
-				title: "OAI Compatible Provider API Key",
-				prompt: existing ? "Update your OAI Compatible API key" : "Enter your OAI Compatible API key",
+				title: "Kong Bridge Provider API Key",
+				prompt: existing ? "Update your Kong Bridge API key" : "Enter your Kong Bridge API key",
 				ignoreFocusOut: true,
 				password: true,
 				value: existing ?? "",
@@ -35,21 +35,21 @@ export function activate(context: vscode.ExtensionContext) {
 				return; // user canceled
 			}
 			if (!apiKey.trim()) {
-				await context.secrets.delete("oaicopilot.apiKey");
-				vscode.window.showInformationMessage("OAI Compatible API key cleared.");
+				await context.secrets.delete("kong-chat-bridge.apiKey");
+				vscode.window.showInformationMessage("Kong Bridge API key cleared.");
 				return;
 			}
-			await context.secrets.store("oaicopilot.apiKey", apiKey.trim());
-			vscode.window.showInformationMessage("OAI Compatible API key saved.");
+			await context.secrets.store("kong-chat-bridge.apiKey", apiKey.trim());
+			vscode.window.showInformationMessage("Kong Bridge API key saved.");
 		})
 	);
 
 	// Management command to configure provider-specific API keys
 	context.subscriptions.push(
-		vscode.commands.registerCommand("oaicopilot.setProviderApikey", async () => {
+		vscode.commands.registerCommand("kong-chat-bridge.setProviderApikey", async () => {
 			// Get provider list from configuration
 			const config = vscode.workspace.getConfiguration();
-			const userModels = normalizeUserModels(config.get<HFModelItem[]>("oaicopilot.models", []));
+			const userModels = normalizeUserModels(config.get<HFModelItem[]>("kong-chat-bridge.models", []));
 
 			// Extract unique providers (case-insensitive)
 			const providers = Array.from(
@@ -58,7 +58,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 			if (providers.length === 0) {
 				vscode.window.showErrorMessage(
-					"No providers found in oaicopilot.models configuration. Please configure models first."
+					"No providers found in kong-chat-bridge.models configuration. Please configure models first."
 				);
 				return;
 			}
@@ -74,12 +74,12 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			// Get existing API key for selected provider
-			const providerKey = `oaicopilot.apiKey.${selectedProvider}`;
+			const providerKey = `kong-chat-bridge.apiKey.${selectedProvider}`;
 			const existing = await context.secrets.get(providerKey);
 
 			// Prompt for API key
 			const apiKey = await vscode.window.showInputBox({
-				title: `OAI Compatible API Key for ${selectedProvider}`,
+				title: `Kong Bridge API Key for ${selectedProvider}`,
 				prompt: existing ? `Update API key for ${selectedProvider}` : `Enter API key for ${selectedProvider}`,
 				ignoreFocusOut: true,
 				password: true,
@@ -102,17 +102,17 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand("oaicopilot.openConfig", async () => {
+		vscode.commands.registerCommand("kong-chat-bridge.openConfig", async () => {
 			ConfigViewPanel.openPanel(context.extensionUri, context.secrets);
 		})
 	);
 
 	// Register the generateGitCommitMessage command handler
 	context.subscriptions.push(
-		vscode.commands.registerCommand("oaicopilot.generateGitCommitMessage", async (scm) => {
+		vscode.commands.registerCommand("kong-chat-bridge.generateGitCommitMessage", async (scm) => {
 			generateCommitMsg(context.secrets, scm);
 		}),
-		vscode.commands.registerCommand("oaicopilot.abortGitCommitMessage", () => {
+		vscode.commands.registerCommand("kong-chat-bridge.abortGitCommitMessage", () => {
 			abortCommitGeneration();
 		})
 	);
@@ -120,7 +120,7 @@ export function activate(context: vscode.ExtensionContext) {
 	// Watch for logLevel configuration changes
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration((e) => {
-			if (e.affectsConfiguration("oaicopilot.logLevel")) {
+			if (e.affectsConfiguration("kong-chat-bridge.logLevel")) {
 				logger.reloadConfig();
 			}
 		})

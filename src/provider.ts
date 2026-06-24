@@ -5,7 +5,6 @@ import {
 	LanguageModelChatProvider,
 	LanguageModelChatRequestMessage,
 	ProvideLanguageModelChatResponseOptions,
-	LanguageModelResponsePart2,
 	Progress,
 } from "vscode";
 
@@ -15,18 +14,32 @@ import type { OllamaRequestBody } from "./ollama/ollamaTypes";
 
 import { parseModelId, createRetryConfig, executeWithRetry, normalizeUserModels } from "./utils";
 
-import { prepareLanguageModelChatInformation } from "./provideModel";
+import { prepareLanguageModelChatInformation, sourceModelIdForCopilotUtilityAlias } from "./provideModel";
 import { countMessageTokens } from "./provideToken";
 import { updateContextStatusBar } from "./statusBar";
 import { OllamaApi } from "./ollama/ollamaApi";
 import { OpenaiApi } from "./openai/openaiApi";
-import { OpenaiResponsesApi } from "./openai/openaiResponsesApi";
+import { OpenaiResponsesApi, type OpenAIResponsesTransport } from "./openai/openaiResponsesApi";
+import {
+	hasOpenAIResponsesWebsocketSession,
+	OpenaiResponsesWebsocketApi,
+	WsUnsupportedError,
+} from "./openai/openaiResponsesWebsocketApi";
+import {
+	buildOpenAIResponsesStatefulPlan,
+	createOpenAIResponsesStatefulCacheBucketKey,
+	createOpenAIResponsesStatefulCacheEntry,
+	findBestMatchingOpenAIResponsesStatefulCacheEntry,
+	hasExplicitPreviousResponseIdValue,
+	upsertOpenAIResponsesStatefulCacheEntry,
+} from "./openai/openaiResponsesStateful";
 import { AnthropicApi } from "./anthropic/anthropicApi";
 import { AnthropicRequestBody } from "./anthropic/anthropicTypes";
 import { GeminiApi, buildGeminiGenerateContentUrl, type GeminiToolCallMeta } from "./gemini/geminiApi";
 import type { GeminiGenerateContentRequest } from "./gemini/geminiTypes";
 import { CommonApi } from "./commonApi";
 import { logger } from "./logger";
+import type { LanguageModelProgressPart } from "./vscodeLanguageModelCompat";
 
 /**
  * VS Code Chat provider backed by Hugging Face Inference Providers.
@@ -36,9 +49,15 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 	private _lastRequestTime: number | null = null;
 
 	private readonly _geminiToolCallMetaByCallId = new Map<string, GeminiToolCallMeta>();
-	private readonly _openaiResponsesPreviousResponseIdUnsupportedBaseUrls = new Set<string>();
+	private readonly _openaiResponsesPreviousResponseIdUnsupportedTargets = new Set<string>();
+	private readonly _openaiResponsesStatefulCacheByTarget = new Map<
+		string,
+		ReturnType<typeof createOpenAIResponsesStatefulCacheEntry>[]
+	>();
+	private readonly _openaiResponsesWsSessionKeyByResponseId = new Map<string, string>();
+	private _openaiResponsesWsSessionSeq = 0;
 
-	static readonly OPENAI_RESPONSES_STATEFUL_MARKER_MIME = "application/vnd.oaicopilot.stateful-marker";
+	static readonly OPENAI_RESPONSES_STATEFUL_MARKER_MIME = "application/vnd.kong-chat-bridge.stateful-marker";
 
 	/**
 	 * Create a provider using the given secret storage for the API key.
@@ -91,15 +110,15 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		model: LanguageModelChatInformation,
 		messages: readonly LanguageModelChatRequestMessage[],
 		options: ProvideLanguageModelChatResponseOptions,
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelProgressPart>,
 		token: CancellationToken
 	): Promise<void> {
-		const trackingProgress: Progress<LanguageModelResponsePart2> = {
+		const trackingProgress: Progress<LanguageModelProgressPart> = {
 			report: (part) => {
 				try {
 					progress.report(part);
 				} catch (e) {
-					console.error("[OAI Compatible Model Provider] Progress.report failed", {
+					console.error("[Kong Bridge Model Provider] Progress.report failed", {
 						modelId: model.id,
 						error: e instanceof Error ? { name: e.name, message: e.message } : String(e),
 					});
@@ -110,10 +129,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		try {
 			// get model config from user settings
 			const config = vscode.workspace.getConfiguration();
-			const userModels = normalizeUserModels(config.get<unknown>("oaicopilot.models", []));
+			const userModels = normalizeUserModels(config.get<unknown>("kong-chat-bridge.models", []));
 
 			// Parse model ID to handle config ID
-			const parsedModelId = parseModelId(model.id);
+			const requestModelId = sourceModelIdForCopilotUtilityAlias(model.id);
+			const parsedModelId = parseModelId(requestModelId);
 
 			// Find matching user model configuration
 			// Prioritize matching models with same base ID and config ID
@@ -132,7 +152,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 			// Check if using Ollama native API mode
 			const apiMode = um?.apiMode ?? "openai";
-			const baseUrl = um?.baseUrl || config.get<string>("oaicopilot.baseUrl", "");
+			const baseUrl = um?.baseUrl || config.get<string>("kong-chat-bridge.baseUrl", "");
 
 			logger.info("request.start", {
 				modelId: model.id,
@@ -151,7 +171,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 			// Apply delay between consecutive requests
 			const modelDelay = um?.delay;
-			const globalDelay = config.get<number>("oaicopilot.delay", 0);
+			const globalDelay = config.get<number>("kong-chat-bridge.delay", 0);
 			const delayMs = modelDelay !== undefined ? modelDelay : globalDelay;
 
 			if (delayMs > 0 && this._lastRequestTime !== null) {
@@ -181,7 +201,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					provider: provider ?? "",
 					useGenericKey,
 				});
-				throw new Error("OAI Compatible API key not found");
+				throw new Error("Kong Bridge API key not found");
 			}
 
 			// send chat request
@@ -199,11 +219,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				headers: logger.sanitizeHeaders(requestHeaders as Record<string, string>),
 			});
 			logger.debug("request.messages.origin", {
-				messages: messages,
+				messages,
 			});
 			if (apiMode === "ollama") {
 				// Ollama native API mode
-				const ollamaApi = new OllamaApi(model.id);
+				const ollamaApi = new OllamaApi(requestModelId);
 				const ollamaMessages = ollamaApi.convertMessages(messages, modelConfig);
 
 				let ollamaRequestBody: OllamaRequestBody = {
@@ -243,7 +263,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				await ollamaApi.processStreamingResponse(response.body, trackingProgress, token);
 			} else if (apiMode === "anthropic") {
 				// Anthropic API mode
-				const anthropicApi = new AnthropicApi(model.id, um?.cache_control !== false);
+				const anthropicApi = new AnthropicApi(requestModelId, um?.cache_control !== false);
 				const anthropicMessages = anthropicApi.convertMessages(messages, modelConfig);
 
 				// requestBody
@@ -284,37 +304,41 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					throw new Error("No response body from Anthropic API");
 				}
 				await anthropicApi.processStreamingResponse(response.body, trackingProgress, token);
-			} else if (apiMode === "openai-responses") {
-				// OpenAI Responses API mode
-				const openaiResponsesApi = new OpenaiResponsesApi(model.id);
+			} else if (apiMode === "openai-responses" || apiMode === "openai-responses-ws") {
+				// OpenAI Responses API mode (HTTP or per-run WebSocket transport).
+				const useWs = apiMode === "openai-responses-ws";
+				const openaiResponsesApi: OpenaiResponsesApi = useWs
+					? new OpenaiResponsesWebsocketApi(requestModelId)
+					: new OpenaiResponsesApi(requestModelId);
 				const normalizedBaseUrl = BASE_URL.replace(/\/+$/, "");
 				const statefulModelId = parsedModelId.baseId;
 
 				// Convert full history once (also extracts system `instructions`).
 				const fullInput = openaiResponsesApi.convertMessages(messages, modelConfig);
+				const statefulCacheBucketKey = createOpenAIResponsesStatefulCacheBucketKey(
+					normalizedBaseUrl,
+					statefulModelId
+				);
+				const statefulCacheEntries = this._openaiResponsesStatefulCacheByTarget.get(statefulCacheBucketKey) ?? [];
+				const cacheMatch = findBestMatchingOpenAIResponsesStatefulCacheEntry(statefulCacheEntries, fullInput);
 
 				const marker = findLastOpenAIResponsesStatefulMarker(statefulModelId, messages);
-				let deltaInput: unknown[] | null = null;
-				if (marker && marker.index >= 0 && marker.index < messages.length - 1) {
-					const deltaMessages = messages.slice(marker.index + 1);
+				let deltaInput: ReturnType<OpenaiResponsesApi["convertMessages"]> | null = null;
+				const cacheDeltaAnchorIndex = !marker && cacheMatch ? findLastAssistantMessageIndex(messages) : -1;
+				const deltaAnchorIndex = marker?.index ?? cacheDeltaAnchorIndex;
+				const hasDeltaMessages = deltaAnchorIndex >= 0 && deltaAnchorIndex < messages.length - 1;
+				if (hasDeltaMessages) {
+					const deltaMessages = messages.slice(deltaAnchorIndex + 1);
 					const converted = openaiResponsesApi.convertMessages(deltaMessages, modelConfig);
 					if (converted.length > 0) {
 						deltaInput = converted;
 					}
 				}
 
-				const canUsePreviousResponseId =
-					!!marker?.marker &&
-					!this._openaiResponsesPreviousResponseIdUnsupportedBaseUrls.has(normalizedBaseUrl) &&
-					Array.isArray(deltaInput) &&
-					deltaInput.length > 0;
-
-				const input = canUsePreviousResponseId ? deltaInput! : fullInput;
-
 				// requestBody
 				let requestBody: Record<string, unknown> = {
 					model: parsedModelId.baseId,
-					input,
+					input: fullInput,
 					stream: true,
 				};
 
@@ -323,20 +347,91 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				// Add prompt_cache_key to enable OpenAI prompt caching.
 				// Without this parameter, cached_tokens is always 0 even with identical requests.
 				if (!requestBody.prompt_cache_key) {
-					requestBody.prompt_cache_key = `oaicopilot-${parsedModelId.baseId}`;
+					requestBody.prompt_cache_key = `kong-chat-bridge-${parsedModelId.baseId}`;
 				}
 				// send Responses API request with retry
 				const url = `${normalizedBaseUrl}/responses`;
 				logger.debug("request.body", { url, requestBody });
 
 				// If the user explicitly set `previous_response_id` via `extra`, don't apply stateful slicing.
-				let addedPreviousResponseId = false;
-				if (requestBody.previous_response_id !== undefined) {
-					requestBody.input = fullInput;
-				} else if (canUsePreviousResponseId) {
-					requestBody.previous_response_id = marker!.marker;
-					addedPreviousResponseId = true;
+				const statefulPlan = buildOpenAIResponsesStatefulPlan({
+					requestModel: parsedModelId.baseId,
+					normalizedBaseUrl,
+					fullInput,
+					deltaInput,
+					marker,
+					cacheCandidate:
+						!marker && cacheMatch
+							? {
+								previousResponseId: cacheMatch.entry.previousResponseId,
+								source: "cache",
+							}
+							: null,
+					hasDeltaMessages,
+					explicitPreviousResponseId: hasExplicitPreviousResponseIdValue(requestBody.previous_response_id),
+					unsupportedPreviousResponseIdKeys: this._openaiResponsesPreviousResponseIdUnsupportedTargets,
+					modelFamily: um?.family,
+					displayName: um?.displayName,
+					modelId: model.id,
+				});
+				const explicitPreviousResponseId = hasExplicitPreviousResponseIdValue(requestBody.previous_response_id);
+				const wsPreviousResponseId = marker?.marker || cacheMatch?.entry.previousResponseId || "";
+				const mappedWsSessionKey = wsPreviousResponseId
+					? this._openaiResponsesWsSessionKeyByResponseId.get(wsPreviousResponseId)
+					: undefined;
+				const wsHasMappedLiveSession =
+					useWs &&
+					!!mappedWsSessionKey &&
+					hasOpenAIResponsesWebsocketSession(mappedWsSessionKey);
+				const wsSessionKey = useWs && wsHasMappedLiveSession
+					? mappedWsSessionKey!
+					: useWs
+						? this.createOpenAIResponsesWsSessionKey(statefulCacheBucketKey)
+						: statefulCacheBucketKey;
+				const wsHasLiveSession = useWs && wsHasMappedLiveSession;
+				const wsCanUseDeltaInput =
+					wsHasLiveSession &&
+					statefulPlan.isGptModel &&
+					!explicitPreviousResponseId &&
+					!!wsPreviousResponseId &&
+					(!!marker?.marker || !!cacheMatch) &&
+					hasDeltaMessages &&
+					Array.isArray(deltaInput) &&
+					deltaInput.length > 0;
+
+				if (useWs) {
+					requestBody.input = wsCanUseDeltaInput ? deltaInput : fullInput;
+					if (wsCanUseDeltaInput) {
+						requestBody.previous_response_id = wsPreviousResponseId;
+					} else {
+						delete requestBody.previous_response_id;
+					}
+				} else {
+					requestBody.input = statefulPlan.input;
+					if (statefulPlan.addedPreviousResponseId) {
+						requestBody.previous_response_id = statefulPlan.previousResponseId;
+					}
 				}
+
+				logger.debug("responses.stateful.plan", {
+					modelId: model.id,
+					requestModel: parsedModelId.baseId,
+					isGptModel: statefulPlan.isGptModel,
+					hasMarker: !!marker?.marker,
+					hasCacheMatch: !!cacheMatch,
+					hasDeltaMessages,
+					deltaInputLength: Array.isArray(deltaInput) ? deltaInput.length : 0,
+					usedPreviousResponseId: !useWs && statefulPlan.addedPreviousResponseId,
+					previousResponseIdSource: !useWs ? statefulPlan.previousResponseIdSource ?? "" : "",
+					wsHasLiveSession,
+					wsCanUseDeltaInput,
+					wsMappedSession: !!mappedWsSessionKey,
+					wsMappedSessionLive: wsHasMappedLiveSession,
+					usedDeltaInput: requestBody.input !== fullInput,
+				});
+
+				const buildResponsesTransportBody = (transport: OpenAIResponsesTransport): Record<string, unknown> =>
+					openaiResponsesApi.sanitizeRequestBody(requestBody, transport);
 
 				const sendRequest = async (body: Record<string, unknown>) =>
 					await executeWithRetry(async () => {
@@ -359,44 +454,109 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						return res;
 					}, retryConfig);
 
-				let response: Response;
-				try {
-					response = await sendRequest(requestBody);
-				} catch (err) {
-					// Some Responses-compatible gateways don't support `previous_response_id`.
-					// Fall back to sending full history when the previous-response attempt fails.
-					const status = (err as { status?: unknown })?.status;
-					const shouldFallback =
-						addedPreviousResponseId && typeof status === "number" && status >= 400 && status < 500 && status !== 429;
-					if (!shouldFallback) {
-						throw err;
+				const wsUsedDeltaInput = useWs && requestBody.input !== fullInput;
+				let wsHandled = false;
+				if (useWs) {
+					try {
+						const wsRequestBody = buildResponsesTransportBody("websocket");
+						const wsRequestHeaders = {
+							...requestHeaders,
+							"X-Client-Request-Id": createOpenAIResponsesWebsocketClientRequestId(wsSessionKey),
+						};
+						logger.debug("responses.ws.body", {
+							modelId: model.id,
+							requestModel: parsedModelId.baseId,
+							sessionKey: wsSessionKey,
+							keys: Object.keys(wsRequestBody).sort(),
+							store: wsRequestBody.store,
+							hasPreviousResponseId: Object.prototype.hasOwnProperty.call(wsRequestBody, "previous_response_id"),
+							inputLength: Array.isArray(wsRequestBody.input) ? wsRequestBody.input.length : 0,
+							toolCount: Array.isArray(wsRequestBody.tools) ? wsRequestBody.tools.length : 0,
+						});
+						await (openaiResponsesApi as OpenaiResponsesWebsocketApi).sendOverWebsocket({
+							sessionKey: wsSessionKey,
+							baseUrl: normalizedBaseUrl,
+							headers: wsRequestHeaders,
+							requestBody: wsRequestBody,
+							progress: trackingProgress,
+							token,
+						});
+						wsHandled = true;
+					} catch (wsErr) {
+						if (wsErr instanceof WsUnsupportedError) {
+							this.forgetOpenAIResponsesWsSession(wsSessionKey);
+							if (wsUsedDeltaInput) {
+								requestBody.input = fullInput;
+								delete requestBody.previous_response_id;
+							}
+							logger.warn("responses.ws.fallback_to_http", {
+								modelId: model.id,
+								requestModel: parsedModelId.baseId,
+								error: wsErr.message,
+								usedDeltaInput: wsUsedDeltaInput,
+								httpFallbackInput: wsUsedDeltaInput ? "full" : "current",
+							});
+							// HTTP fallback cannot rely on WS session state.
+						} else {
+							throw wsErr;
+						}
+					}
+				}
+
+				if (!wsHandled) {
+					let response: Response;
+					const httpRequestBody = buildResponsesTransportBody("http");
+					try {
+						response = await sendRequest(httpRequestBody);
+					} catch (err) {
+						// Some Responses-compatible gateways don't support `previous_response_id`.
+						// Fall back to sending full history when the previous-response attempt fails.
+						const status = (err as { status?: unknown })?.status;
+						const shouldFallback =
+							statefulPlan.addedPreviousResponseId &&
+							typeof status === "number" &&
+							status >= 400 &&
+							status < 500 &&
+							status !== 429;
+						if (!shouldFallback) {
+							throw err;
+						}
+
+						this._openaiResponsesPreviousResponseIdUnsupportedTargets.add(statefulPlan.unsupportedKey);
+
+						let fallbackBody: Record<string, unknown> = {
+							model: parsedModelId.baseId,
+							input: fullInput,
+							stream: true,
+						};
+						fallbackBody = openaiResponsesApi.prepareRequestBody(fallbackBody, um, options);
+						delete fallbackBody.previous_response_id;
+						fallbackBody = openaiResponsesApi.sanitizeRequestBody(fallbackBody, "http");
+						response = await sendRequest(fallbackBody);
 					}
 
-					this._openaiResponsesPreviousResponseIdUnsupportedBaseUrls.add(normalizedBaseUrl);
-
-					let fallbackBody: Record<string, unknown> = {
-						model: parsedModelId.baseId,
-						input: fullInput,
-						stream: true,
-					};
-					fallbackBody = openaiResponsesApi.prepareRequestBody(fallbackBody, um, options);
-					delete fallbackBody.previous_response_id;
-					response = await sendRequest(fallbackBody);
+					if (!response.body) {
+						throw new Error("No response body from Responses API");
+					}
+					await openaiResponsesApi.processStreamingResponse(response.body, trackingProgress, token);
 				}
 
-				if (!response.body) {
-					throw new Error("No response body from Responses API");
-				}
-				await openaiResponsesApi.processStreamingResponse(response.body, trackingProgress, token);
-
-				// Append a stateful marker so future requests can reuse `previous_response_id` (Copilot Chat style).
+				// Append a stateful marker so future requests can reuse `previous_response_id` (chat host style).
 				const responseId = openaiResponsesApi.responseId;
 				if (responseId) {
+					const cacheEntry = createOpenAIResponsesStatefulCacheEntry(fullInput, responseId);
+					this._openaiResponsesStatefulCacheByTarget.set(
+						statefulCacheBucketKey,
+						upsertOpenAIResponsesStatefulCacheEntry(statefulCacheEntries, cacheEntry)
+					);
+					if (useWs && wsHandled) {
+						this.rememberOpenAIResponsesWsSession(responseId, wsSessionKey);
+					}
 					trackingProgress.report(createOpenAIResponsesStatefulMarkerPart(statefulModelId, responseId));
 				}
 			} else if (apiMode === "gemini") {
 				// Gemini native API mode
-				const geminiApi = new GeminiApi(model.id, this._geminiToolCallMetaByCallId);
+				const geminiApi = new GeminiApi(requestModelId, this._geminiToolCallMetaByCallId);
 				const geminiMessages = geminiApi.convertMessages(messages, modelConfig);
 
 				const systemParts: string[] = [];
@@ -457,7 +617,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				await geminiApi.processStreamingResponse(response.body, trackingProgress, token);
 			} else {
 				// OpenAI compatible API mode (default)
-				const openaiApi = new OpenaiApi(model.id);
+				const openaiApi = new OpenaiApi(requestModelId);
 				const openaiMessages = openaiApi.convertMessages(messages, modelConfig);
 
 				// requestBody
@@ -481,9 +641,9 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 					if (!res.ok) {
 						const errorText = await res.text();
-						console.error("[OAI Compatible Model Provider] OAI Compatible API error response", errorText);
+						console.error("[Kong Bridge Model Provider] Kong Bridge API error response", errorText);
 						throw new Error(
-							`OAI Compatible API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}\nURL: ${url}`
+							`Kong Bridge API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}\nURL: ${url}`
 						);
 					}
 
@@ -491,12 +651,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				}, retryConfig);
 
 				if (!response.body) {
-					throw new Error("No response body from OAI Compatible API");
+					throw new Error("No response body from Kong Bridge API");
 				}
 				await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
 			}
 		} catch (err) {
-			console.error("[OAI Compatible Model Provider] Chat request failed", {
+			console.error("[Kong Bridge Model Provider] Chat request failed", {
 				modelId: model.id,
 				messageCount: messages.length,
 				error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
@@ -516,6 +676,30 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		}
 	}
 
+	private createOpenAIResponsesWsSessionKey(bucketKey: string): string {
+		this._openaiResponsesWsSessionSeq++;
+		return `${bucketKey}::ws-${Date.now().toString(36)}-${this._openaiResponsesWsSessionSeq.toString(36)}`;
+	}
+
+	private rememberOpenAIResponsesWsSession(responseId: string, sessionKey: string): void {
+		this._openaiResponsesWsSessionKeyByResponseId.set(responseId, sessionKey);
+		while (this._openaiResponsesWsSessionKeyByResponseId.size > 128) {
+			const oldest = this._openaiResponsesWsSessionKeyByResponseId.keys().next().value;
+			if (!oldest) {
+				break;
+			}
+			this._openaiResponsesWsSessionKeyByResponseId.delete(oldest);
+		}
+	}
+
+	private forgetOpenAIResponsesWsSession(sessionKey: string): void {
+		for (const [responseId, mappedSessionKey] of this._openaiResponsesWsSessionKeyByResponseId) {
+			if (mappedSessionKey === sessionKey) {
+				this._openaiResponsesWsSessionKeyByResponseId.delete(responseId);
+			}
+		}
+	}
+
 	/**
 	 * Ensure an API key exists in SecretStorage, optionally prompting the user when not silent.
 	 * @param useGenericKey If true, use generic API key.
@@ -526,13 +710,13 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 		let apiKey: string | undefined;
 		if (provider && provider.trim() !== "") {
 			const normalizedProvider = provider.trim().toLowerCase();
-			const providerKey = `oaicopilot.apiKey.${normalizedProvider}`;
+			const providerKey = `kong-chat-bridge.apiKey.${normalizedProvider}`;
 			apiKey = await this.secrets.get(providerKey);
 
 			if (!apiKey && !useGenericKey) {
 				const entered = await vscode.window.showInputBox({
-					title: `OAI Compatible API Key for ${normalizedProvider}`,
-					prompt: `Enter your OAI Compatible API key for ${normalizedProvider}`,
+					title: `Kong Bridge API Key for ${normalizedProvider}`,
+					prompt: `Enter your Kong Bridge API key for ${normalizedProvider}`,
 					ignoreFocusOut: true,
 					password: true,
 				});
@@ -545,26 +729,38 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 		// Fall back to generic API key
 		if (!apiKey) {
-			apiKey = await this.secrets.get("oaicopilot.apiKey");
+			apiKey = await this.secrets.get("kong-chat-bridge.apiKey");
 		}
 
 		if (!apiKey && useGenericKey) {
 			const entered = await vscode.window.showInputBox({
-				title: "OAI Compatible API Key",
-				prompt: "Enter your OAI Compatible API key",
+				title: "Kong Bridge API Key",
+				prompt: "Enter your Kong Bridge API key",
 				ignoreFocusOut: true,
 				password: true,
 			});
 			if (entered && entered.trim()) {
 				apiKey = entered.trim();
-				await this.secrets.store("oaicopilot.apiKey", apiKey);
+				await this.secrets.store("kong-chat-bridge.apiKey", apiKey);
 			}
 		}
 		return apiKey;
 	}
 }
 
-type OpenAIResponsesStatefulMarkerLocation = { marker: string; index: number };
+interface OpenAIResponsesStatefulMarkerLocation {
+	marker: string;
+	index: number;
+}
+
+function createOpenAIResponsesWebsocketClientRequestId(sessionKey: string): string {
+	let hash = 2166136261;
+	for (let i = 0; i < sessionKey.length; i++) {
+		hash ^= sessionKey.charCodeAt(i);
+		hash = Math.imul(hash, 16777619);
+	}
+	return `kong-chat-bridge-${(hash >>> 0).toString(16)}`;
+}
 
 function createOpenAIResponsesStatefulMarkerPart(modelId: string, marker: string): vscode.LanguageModelDataPart {
 	const payload = `${modelId}\\${marker}`;
@@ -620,4 +816,14 @@ function findLastOpenAIResponsesStatefulMarker(
 		}
 	}
 	return null;
+}
+
+function findLastAssistantMessageIndex(messages: readonly LanguageModelChatRequestMessage[]): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].role === vscode.LanguageModelChatMessageRole.Assistant) {
+			return i;
+		}
+	}
+
+	return -1;
 }

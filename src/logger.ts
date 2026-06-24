@@ -25,7 +25,7 @@ class Logger {
 	 * Initialize the logger: read config, ensure log directory exists.
 	 */
 	init(): void {
-		this._logDir = path.join(os.homedir(), ".copilot", "oaicopilot", "logs");
+		this._logDir = path.join(os.homedir(), ".kong", "kong-chat-bridge", "logs");
 		this.reloadConfig();
 		this.ensureLogDir();
 		this._initialized = true;
@@ -36,7 +36,7 @@ class Logger {
 	 */
 	reloadConfig(): void {
 		const config = vscode.workspace.getConfiguration();
-		this._level = config.get<LogLevel>("oaicopilot.logLevel", "off");
+		this._level = config.get<LogLevel>("kong-chat-bridge.logLevel", "off");
 	}
 
 	debug(tag: string, data: Record<string, unknown>): void {
@@ -116,7 +116,7 @@ class Logger {
 	private getLogFilePath(): string {
 		const now = new Date();
 		const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
-		return path.join(this._logDir, `oaicopilot-${dateStr}.log`);
+		return path.join(this._logDir, `kong-chat-bridge-${dateStr}.log`);
 	}
 
 	private write(level: string, tag: string, data: Record<string, unknown>): void {
@@ -139,7 +139,7 @@ class Logger {
 			fs.appendFileSync(filePath, line, "utf8");
 			this.cleanOldLogs();
 		} catch (e) {
-			console.error("[OAICopilot Logger] Failed to write log:", e);
+			console.error("[Kong-chat-bridge Logger] Failed to write log:", e);
 		}
 	}
 
@@ -154,8 +154,8 @@ class Logger {
 			const cutoffTime = now.getTime() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
 			for (const file of files) {
-				// Extract date from filename: oaicopilot-YYYYMMDD.log
-				const match = file.match(/^oaicopilot-(\d{4})(\d{2})(\d{2})\.log$/);
+				// Extract date from filename: kong-chat-bridge-YYYYMMDD.log
+				const match = file.match(/^kong-chat-bridge-(\d{4})(\d{2})(\d{2})\.log$/);
 				if (!match) {
 					continue;
 				}
@@ -171,7 +171,7 @@ class Logger {
 				}
 			}
 		} catch (e) {
-			console.error("[OAICopilot Logger] Failed to clean old logs:", e);
+			console.error("[Kong-chat-bridge Logger] Failed to clean old logs:", e);
 		}
 	}
 }

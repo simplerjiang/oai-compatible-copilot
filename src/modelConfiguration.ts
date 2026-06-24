@@ -50,9 +50,6 @@ export type ModelConfigurationOptions = vscode.ProvideLanguageModelChatResponseO
 };
 
 export type ModelPickerChatInformation = vscode.LanguageModelChatInformation & {
-	readonly isUserSelectable?: boolean;
-	readonly detail?: string;
-	readonly tooltip?: string;
 	readonly configurationSchema?: ReturnType<typeof createReasoningEffortConfigurationSchema>;
 };
 

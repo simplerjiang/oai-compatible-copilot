@@ -3,7 +3,6 @@ import {
 	CancellationToken,
 	LanguageModelChatRequestMessage,
 	ProvideLanguageModelChatResponseOptions,
-	LanguageModelResponsePart2,
 	Progress,
 } from "vscode";
 
@@ -12,6 +11,7 @@ import type { OpenAIFunctionToolDef } from "../openai/openaiTypes";
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
+import type { LanguageModelProgressPart } from "../vscodeLanguageModelCompat";
 
 import {
 	isImageMimeType,
@@ -766,7 +766,7 @@ export class GeminiApi extends CommonApi<GeminiChatMessage, GeminiGenerateConten
 
 	async processStreamingResponse(
 		responseBody: ReadableStream<Uint8Array>,
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelProgressPart>,
 		token: CancellationToken
 	): Promise<void> {
 		const modelId = this._modelId;
@@ -1027,12 +1027,12 @@ export class GeminiApi extends CommonApi<GeminiChatMessage, GeminiGenerateConten
 		}
 	}
 
-	async *createMessage(
-		model: HFModelItem,
-		systemPrompt: string,
-		messages: { role: string; content: string }[],
-		baseUrl: string,
-		apiKey: string
+	createMessage(
+		_model: HFModelItem,
+		_systemPrompt: string,
+		_messages: { role: string; content: string }[],
+		_baseUrl: string,
+		_apiKey: string
 	): AsyncGenerator<{ type: "text"; text: string }> {
 		throw new Error("Method not implemented.");
 	}
@@ -1075,7 +1075,7 @@ export async function fetchGeminiModels(
 			try {
 				errorText = await resp.text();
 			} catch (error) {
-				console.error("[OAI Compatible Model Provider] Failed to read response text", error);
+				console.error("[Kong Bridge Model Provider] Failed to read response text", error);
 			}
 			throw new Error(
 				`Gemini API error: [${resp.status}] ${resp.statusText}${errorText ? `\n${errorText}` : ""}\nURL: ${url.toString()}`
