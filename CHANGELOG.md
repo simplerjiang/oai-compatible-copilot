@@ -2,6 +2,8 @@
 
 ## 1.0.5
 
+- Added generated-image output support for OpenAI Chat Completions `delta.images` and OpenAI Responses `image_generation_call` events.
+- Saved generated images to a local `~/.kong/kong-chat-bridge/generated-images` file and emitted a Markdown image link so Copilot Chat can render or open the result even when binary image response parts are ignored by the host UI.
 - Added an opt-in Copilot utility-small fallback setting for environments where Copilot cannot resolve its internal `gpt-4o-mini` tool-selection model.
 - Kept the compatibility alias disabled by default; when enabled, it is hidden from the user picker and routes requests to the selected configured model.
 - Documented the reasoning UI caveat for hosts that treat the fallback as a `gpt-4o-mini` family model.

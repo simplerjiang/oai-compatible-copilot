@@ -1,3 +1,6 @@
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import * as vscode from "vscode";
 import type { HFModelItem, RetryConfig } from "./types";
 import { OpenAIFunctionToolDef } from "./openai/openaiTypes";
@@ -194,6 +197,82 @@ export function isImageMimeType(mimeType: string): boolean {
 export function createDataUrl(dataPart: vscode.LanguageModelDataPart): string {
 	const base64Data = Buffer.from(dataPart.data).toString("base64");
 	return `data:${dataPart.mimeType};base64,${base64Data}`;
+}
+
+export function createImageDataPartFromBase64(
+	base64Data: string,
+	outputFormat: string | undefined = "png"
+): vscode.LanguageModelDataPart | undefined {
+	if (!base64Data) {
+		return undefined;
+	}
+	const format = (outputFormat || "png").replace(/^\./, "").toLowerCase();
+	const mimeType = format.startsWith("image/") ? format : `image/${format === "jpg" ? "jpeg" : format}`;
+	if (!isImageMimeType(mimeType)) {
+		return undefined;
+	}
+	try {
+		const data = Buffer.from(base64Data, "base64");
+		return vscode.LanguageModelDataPart.image(data, mimeType);
+	} catch {
+		return undefined;
+	}
+}
+
+export function createImageDataPartFromDataUrl(dataUrl: string): vscode.LanguageModelDataPart | undefined {
+	const match = /^data:([^;,]+);base64,(.+)$/is.exec(dataUrl.trim());
+	if (!match) {
+		return undefined;
+	}
+	const mimeType = match[1].toLowerCase();
+	if (!isImageMimeType(mimeType)) {
+		return undefined;
+	}
+	return createImageDataPartFromBase64(match[2], mimeType);
+}
+
+export function createGeneratedImageMarkdownPart(
+	dataPart: vscode.LanguageModelDataPart
+): vscode.LanguageModelTextPart | undefined {
+	const filePath = saveGeneratedImage(dataPart.data, dataPart.mimeType);
+	if (!filePath) {
+		return undefined;
+	}
+	const uri = vscode.Uri.file(filePath).toString();
+	return new vscode.LanguageModelTextPart(`\n\n![Generated image](${uri})\n\n[Open generated image](${uri})\n\n`);
+}
+
+function saveGeneratedImage(data: Uint8Array, mimeType: string): string | undefined {
+	const extension = imageExtensionFromMimeType(mimeType);
+	if (!extension) {
+		return undefined;
+	}
+	try {
+		const outputDir = path.join(os.homedir(), ".kong", "kong-chat-bridge", "generated-images");
+		fs.mkdirSync(outputDir, { recursive: true });
+		const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "");
+		const suffix = Math.random().toString(16).slice(2, 10);
+		const filePath = path.join(outputDir, `generated-image-${timestamp}-${suffix}.${extension}`);
+		fs.writeFileSync(filePath, data);
+		return filePath;
+	} catch {
+		return undefined;
+	}
+}
+
+function imageExtensionFromMimeType(mimeType: string): string {
+	switch (mimeType) {
+		case "image/png":
+			return "png";
+		case "image/jpeg":
+			return "jpg";
+		case "image/gif":
+			return "gif";
+		case "image/webp":
+			return "webp";
+		default:
+			return "";
+	}
 }
 
 /**
