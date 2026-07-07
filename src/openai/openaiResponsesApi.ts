@@ -13,6 +13,9 @@ import type { OpenAIToolCall } from "./openaiTypes";
 import {
 	isImageMimeType,
 	createDataUrl,
+	createGeneratedImageMarkdownPart,
+	createImageDataPartFromBase64,
+	createImageDataPartFromDataUrl,
 	isToolResultPart,
 	collectToolResultText,
 	convertToolsToOpenAIResponses,
@@ -92,6 +95,7 @@ export type ResponsesInputItem =
 
 export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<string, unknown>> {
 	private _responseId: string | null = null;
+	private readonly _emittedImageKeys = new Set<string>();
 
 	constructor(modelId: string) {
 		super(modelId);
@@ -349,6 +353,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 		token: CancellationToken
 	): Promise<void> {
 		this._responseId = null;
+		this._emittedImageKeys.clear();
 		const modelId = this._modelId;
 		logger.debug("responses.stream.start", { modelId });
 		const reader = responseBody.getReader();
@@ -541,6 +546,12 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 				return;
 			}
 
+			case "response.image_generation_call.completed":
+			case "response.image_generation_call.partial_image": {
+				this.processImageGenerationEvent(event, progress);
+				return;
+			}
+
 			// Tool call events
 			case "response.function_call_arguments.delta":
 			case "response.function_call_arguments.done": {
@@ -595,6 +606,10 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 			case "response.output_item.added":
 			case "response.output_item.done": {
 				const item = event.item && typeof event.item === "object" ? (event.item as Record<string, unknown>) : null;
+				if (item?.type === "image_generation_call") {
+					this.processImageGenerationItem(item, progress);
+					return;
+				}
 				if (!item || item.type !== "function_call") {
 					return;
 				}
@@ -655,6 +670,7 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 				// End of message - ensure thinking is ended and flush all tool calls
 				await this.flushToolCallBuffers(progress, false);
 				this.reportEndThinking(progress);
+				this.processCompletedImageItems(event, progress);
 				// Capture usage from the completed event
 				const usage = event.usage ?? (event.response as Record<string, unknown>)?.usage;
 				if (usage && typeof usage === "object") {
@@ -672,6 +688,74 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 				return;
 			}
 		}
+	}
+
+	private processImageGenerationEvent(
+		event: Record<string, unknown>,
+		progress: Progress<LanguageModelProgressPart>
+	): void {
+		const base64Data =
+			typeof event.result === "string"
+				? event.result
+				: typeof event.partial_image_b64 === "string"
+					? event.partial_image_b64
+					: "";
+		const outputFormat = typeof event.output_format === "string" ? event.output_format : undefined;
+		this.reportImageResult(base64Data, outputFormat, progress);
+	}
+
+	private processImageGenerationItem(
+		item: Record<string, unknown>,
+		progress: Progress<LanguageModelProgressPart>
+	): void {
+		const base64Data = typeof item.result === "string" ? item.result : "";
+		const outputFormat = typeof item.output_format === "string" ? item.output_format : undefined;
+		this.reportImageResult(base64Data, outputFormat, progress);
+	}
+
+	private processCompletedImageItems(
+		event: Record<string, unknown>,
+		progress: Progress<LanguageModelProgressPart>
+	): void {
+		const response = event.response && typeof event.response === "object" ? (event.response as Record<string, unknown>) : null;
+		const output = Array.isArray(response?.output) ? response.output : Array.isArray(event.output) ? event.output : [];
+		for (const item of output) {
+			if (!item || typeof item !== "object") {
+				continue;
+			}
+			const outputItem = item as Record<string, unknown>;
+			if (outputItem.type === "image_generation_call") {
+				this.processImageGenerationItem(outputItem, progress);
+			}
+		}
+	}
+
+	private reportImageResult(
+		value: string,
+		outputFormat: string | undefined,
+		progress: Progress<LanguageModelProgressPart>
+	): boolean {
+		if (!value) {
+			return false;
+		}
+		const key = `${outputFormat ?? "png"}:${value.length}:${value.slice(0, 64)}:${value.slice(-64)}`;
+		if (this._emittedImageKeys.has(key)) {
+			return false;
+		}
+		const imagePart = value.trim().startsWith("data:")
+			? createImageDataPartFromDataUrl(value)
+			: createImageDataPartFromBase64(value, outputFormat);
+		if (!imagePart) {
+			return false;
+		}
+		this._emittedImageKeys.add(key);
+		this.reportEndThinking(progress);
+		progress.report(imagePart);
+		const markdownPart = createGeneratedImageMarkdownPart(imagePart);
+		if (markdownPart) {
+			progress.report(markdownPart);
+		}
+		return true;
 	}
 
 	private captureResponseIdFromEvent(event: Record<string, unknown>): void {

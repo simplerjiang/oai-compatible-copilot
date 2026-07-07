@@ -21,6 +21,8 @@ import type {
 import {
 	isImageMimeType,
 	createDataUrl,
+	createGeneratedImageMarkdownPart,
+	createImageDataPartFromDataUrl,
 	isToolResultPart,
 	collectToolResultText,
 	convertToolsToOpenAI,
@@ -443,6 +445,27 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 			}
 		}
 
+		const images = deltaObj?.images;
+		if (Array.isArray(images)) {
+			for (const image of images) {
+				const dataUrl = this.getImageDataUrl(image);
+				if (!dataUrl) {
+					continue;
+				}
+				const imagePart = createImageDataPartFromDataUrl(dataUrl);
+				if (!imagePart) {
+					continue;
+				}
+				this.reportEndThinking(progress);
+				progress.report(imagePart);
+				const markdownPart = createGeneratedImageMarkdownPart(imagePart);
+				if (markdownPart) {
+					progress.report(markdownPart);
+				}
+				emitted = true;
+			}
+		}
+
 		if (deltaObj?.tool_calls) {
 			// If there's an active thinking sequence, end it first
 			this.reportEndThinking(progress);
@@ -486,6 +509,25 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 			await this.flushToolCallBuffers(progress, /*throwOnInvalid*/ true);
 		}
 		return emitted;
+	}
+
+	private getImageDataUrl(value: unknown): string {
+		if (!value || typeof value !== "object") {
+			return "";
+		}
+		const image = value as Record<string, unknown>;
+		if (typeof image.url === "string") {
+			return image.url;
+		}
+		const imageUrl = image.image_url;
+		if (typeof imageUrl === "string") {
+			return imageUrl;
+		}
+		if (imageUrl && typeof imageUrl === "object") {
+			const url = (imageUrl as Record<string, unknown>).url;
+			return typeof url === "string" ? url : "";
+		}
+		return "";
 	}
 
 	async *createMessage(

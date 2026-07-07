@@ -70,6 +70,28 @@ By default, Kong-chat-bridge does not advertise any compatibility alias for Copi
 
 Leave this setting empty to avoid exposing the compatibility alias. Enable it only as a network workaround, because the host may treat the fallback as a `gpt-4o-mini` family model and this can affect reasoning/thinking UI behavior.
 
+## Image Generation
+
+For Responses-compatible gateways that expose OpenAI image-generation tools, add the image tool through the model's `extra` request parameters:
+
+```json
+{
+	"id": "gpt-5.5",
+	"apiMode": "openai-responses-ws",
+	"extra": {
+		"tools": [
+			{
+				"type": "image_generation",
+				"model": "gpt-image-2"
+			}
+		],
+		"tool_choice": "auto"
+	}
+}
+```
+
+When the upstream returns generated image data, Kong-chat-bridge emits a VS Code image response part and also writes the image to `~/.kong/kong-chat-bridge/generated-images` with a Markdown image link in the chat response.
+
 ## Notes
 
 - API keys are stored with VS Code SecretStorage.
